@@ -91,12 +91,38 @@ test('opening practice records progress', async ({ page }) => {
   await page.getByTestId('practice-toggle').click();
   await playMove(page, 'opening-practice-board', 'e2e4');
   await expect(page.getByTestId('opening-feedback')).toContainText('e4 ✓');
-  // Wrong move on purpose: expected Nf3 after 1...e5.
+  // Losing move on purpose (2.Ba6?? bxa6): the engine confirms it, so it counts as an error.
   await page.waitForTimeout(700);
-  await playMove(page, 'opening-practice-board', 'f1c4');
-  await expect(page.getByTestId('opening-feedback')).toContainText('O esperado era Nf3');
+  await playMove(page, 'opening-practice-board', 'f1a6');
+  await expect(page.getByTestId('opening-feedback')).toContainText('O esperado era Nf3', { timeout: 30_000 });
   const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
   expect(attempts.at(-1)?.correct).toBe(false);
+});
+
+test('opening practice accepts a transposition (audit M3)', async ({ page }) => {
+  await page.goto('/#/openings');
+  await page.getByTestId('practice-toggle').click();
+  await playMove(page, 'opening-practice-board', 'e2e4');
+  await page.waitForTimeout(700);
+  // 2.Bc4 Nc6 3.Nf3 reaches the line position after 3.Bc4.
+  await playMove(page, 'opening-practice-board', 'f1c4');
+  await expect(page.getByTestId('opening-feedback')).toContainText('transposição');
+  await expect(page.locator('#opening-practice-board-square-c6 [data-piece]')).toBeVisible();
+  await playMove(page, 'opening-practice-board', 'g1f3');
+  await expect(page.getByTestId('opening-feedback')).toContainText('Nf3 ✓');
+  const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
+  expect(attempts.filter((a) => !a.correct)).toHaveLength(0);
+});
+
+test('a playable move outside the line ends the drill without an error (audit M3)', async ({ page }) => {
+  await page.goto('/#/openings');
+  await page.getByTestId('practice-toggle').click();
+  await playMove(page, 'opening-practice-board', 'e2e4');
+  await page.waitForTimeout(700);
+  await playMove(page, 'opening-practice-board', 'b1c3');
+  await expect(page.getByTestId('opening-feedback')).toContainText('fora do repertório, mas é jogável', { timeout: 30_000 });
+  const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
+  expect(attempts.filter((a) => !a.correct)).toHaveLength(0);
 });
 
 test('backup export produces a valid file', async ({ page }) => {

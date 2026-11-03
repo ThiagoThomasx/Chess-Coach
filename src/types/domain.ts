@@ -312,6 +312,8 @@ export interface Opening {
   tacticalIdeas: string[];
   commonMistakes: string[];
   custom?: boolean;
+  /** Plies a game must follow before it is named after this opening (default 4). */
+  definingPly?: number;
 }
 
 export interface RepertoireEntry {

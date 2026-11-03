@@ -153,6 +153,13 @@ Leitner simples (`services/scheduling/srs.ts`), intervalos padrão 1, 3, 7, 14, 
 
 Treinos de linhas de abertura do repertório usam o mesmo agendador (erro → revisão em 10 minutos).
 
+**Treino de linhas de abertura** (`services/openings/practice.ts`):
+
+- Transposição: se o usuário joga antes o seu próximo lance da linha e, depois da resposta do adversário prevista na linha, o lance pulado leva exatamente à posição da linha (sem contar os contadores), a linha continua. O lance pulado continua devido.
+- Desvio sem transposição: o motor compara o lance com o melhor (profundidade 12). Com perda ≤ tolerância dos exercícios (padrão 5 p.p.), o lance é "fora do repertório, mas jogável": o treino termina sem registrar erro. Acima disso, ou sem motor disponível, conta como erro.
+
+**Identificação da abertura de uma partida** (`matchOpening`): a linha mais longa da biblioteca que é prefixo da partida, desde que a partida chegue ao **lance que define a abertura** (por exemplo, Italiana = 3.Bc4, Ruy López = 3.Bb5, Najdorf = 5…a6). Antes disso não se atribui nome da biblioteca (usa-se o cabeçalho do PGN ou o ECO, se houver).
+
 ## 7. Perfil de competências
 
 Competências: visão tática, cálculo, identificação de ameaças, defesa, estratégia, aberturas, finais, reconhecimento de padrões.

@@ -13,6 +13,7 @@ import { buildSolutionTree, goalFor, playSolverMove } from '../src/services/exer
 import type { Exercise, ExerciseGoal } from '../src/types/domain';
 import { parsePgnText } from '../src/services/pgn/parsePgn';
 import { SHORT_BLUNDER_GAME } from './fixtures';
+import { judgeOffBook, validateLine } from '../src/services/openings/practice';
 
 const BRIDGE = fileURLToPath(new URL('./support/sf-bridge.cjs', import.meta.url));
 
@@ -214,4 +215,13 @@ describe('explanation corpus from the Sprint 3 audit (real engine)', () => {
       if (concepts.some((c) => c.verified)) expect(concepts[0]?.verified).toBe(true);
     }, 120_000);
   }
+});
+
+describe('opening deviations (audit M3, real engine)', () => {
+  it('London 2.Nf3 is off-book but playable; 2.Ba6?? in the Italian is not', async () => {
+    const london = validateLine(['d4', 'd5']).fens[2]!;
+    expect((await judgeOffBook(engine, london, 'g1f3', 5)).playable).toBe(true);
+    const italian = validateLine(['e4', 'e5']).fens[2]!;
+    expect((await judgeOffBook(engine, italian, 'f1a6', 5)).playable).toBe(false);
+  }, 120_000);
 });
