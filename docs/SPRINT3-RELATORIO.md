@@ -1,6 +1,6 @@
 # ChessQuest — Sprint 3: relatório final
 
-Data: 2026-11-03 · Ponto de partida: branch `fix/sprint3-phase1`, depois das 7 fases de correção da auditoria anterior ([AUDITORIA-SPRINT3.md](AUDITORIA-SPRINT3.md)). Nenhum trabalho anterior foi descartado e nenhum comando destrutivo de Git foi usado. **As mudanças deste relatório ainda não foram commitadas.**
+Data: 2026-11-03 · Ponto de partida: branch `fix/sprint3-phase1`, depois das 7 fases de correção da auditoria anterior ([AUDITORIA-SPRINT3.md](AUDITORIA-SPRINT3.md)). Nenhum trabalho anterior foi descartado e nenhum comando destrutivo de Git foi usado. As mudanças deste relatório foram commitadas em `7b82a53`.
 
 ## Linha de base (antes de qualquer alteração)
 
@@ -102,6 +102,8 @@ Verificação manual no navegador (origem `audit.localhost`, separada dos seus d
 - "Erro estratégico" é definido de forma estreita (perda de avaliação numa posição vencedora sem mudança de material). Planos e estrutura de peões continuam sem análise própria.
 - A seção de ameaça só reconhece mate em 1 e peças capturáveis com ganho; ameaças de mate em 2+ ou de garfo no lance seguinte não são nomeadas.
 - Motivos ainda não detectados: espeto, raio-X, interferência, ataque a peões que protegem peças (o 4…Qg5 da Blackburne aparece como "combinação" ou como "lance forçante que não se sustenta", e não como ataque duplo).
+- A deduplicação de exercícios (`addExercise`) percorre a tabela inteira a cada inserção, porque não há índice por posição. Com centenas de exercícios o custo é desprezível; com milhares, a geração fica mais lenta. O índice pode entrar na migração v3 (prioridade 1).
+- `src/db/trainingRepo.ts` importa `fenKey` de `services/analysis/gameAnalyzer`: a camada de dados passou a depender da camada de serviços. Funciona, mas a função deveria morar num módulo utilitário compartilhado.
 - Navegar para `?ply=N` estando já na mesma partida não muda o lance exibido (vindo de outra tela, funciona).
 
 ## 7. Riscos conhecidos
