@@ -111,14 +111,16 @@ Critérios mínimos (`checkCandidate`): análise completa, profundidade ≥ mín
 | Tipo | Quando | Lances do usuário |
 |---|---|---|
 | Mate | A melhor linha é mate forçado para quem joga | N do "mate em N" (máx. 4; com N > 4, o aluno joga 4 lances que mantêm o mate em N forçado) |
-| Sequência | A melhor linha ganha ≥ 2 pontos em ponto estável | ⌈meias-jogadas até estabilizar / 2⌉, de 1 a 3 |
-| Defesa | Tema defensivo (mate permitido, peça desprotegida, ameaça, cravada…) | 1 |
+| Sequência | A melhor linha ganha ≥ 2 pontos em ponto estável | ⌈meias-jogadas até o ganho / 2⌉, de 1 a 3: o primeiro corte da linha cujo ponto estável (recapturas pendentes incluídas) já tem o ganho, não o horizonte da medição. Um ganho no 1º lance vira "lance único" |
+| Defesa | Tema defensivo (mate permitido, peça desprotegida, ameaça, cravada…) ou qualquer motivo **do adversário** (garfo, combinação sofridos…) | 1 |
 | Conversão | Sem ganho material, posição vencedora (≥ 80%) | 2 |
 | Lance único | Demais casos | 1 |
 
+Quando o motivo é do adversário, o objetivo é defensivo ("evite a tática do adversário"), nunca "ganhe material". O título do exercício (o tema) fica oculto até o fim da primeira tentativa, porque entrega o motivo.
+
 ### 5.3 Árvore de solução (`buildSolutionTree`)
 
-Construída com o motor ao criar o exercício: em cada posição do usuário, busca MultiPV (≥ 3) → **lances aceitos** = todos dentro da tolerância (padrão 5 p.p.) do melhor. Em metas de mate, só são aceitos lances que mantêm mate forçado **dentro do orçamento de mate** (N do mate em N menos os lances já jogados; a expectativa de vitória não distingue mate em 2 de mate em 5). Uma árvore nunca fica com a raiz vazia: se nenhum lance passar no filtro, a raiz usa os lances aceitos da análise da partida. Na raiz, até 2 lances aceitos são expandidos; abaixo dela, o principal. Cada lance expandido recebe até 2 **respostas equivalentes do adversário** (dentro da tolerância, do ponto de vista dele), recursivamente até o limite de lances.
+Construída com o motor ao criar o exercício: em cada posição do usuário, busca MultiPV (≥ 3) → **lances aceitos** = todos dentro da tolerância (padrão 5 p.p.) do melhor. Em metas de mate, só são aceitos lances que mantêm mate forçado **dentro do orçamento de mate** (N do mate em N menos os lances já jogados; a expectativa de vitória não distingue mate em 2 de mate em 5). Uma árvore nunca fica com a raiz vazia: se nenhum lance passar no filtro, a raiz usa os lances aceitos da análise da partida. Na raiz, o lance principal da análise da partida fica em primeiro quando continua aceito (a nova busca pode reordenar lances empatados), e até 2 lances aceitos são expandidos; abaixo dela, o principal. Cada lance expandido recebe até 2 **respostas equivalentes do adversário** (dentro da tolerância, do ponto de vista dele), recursivamente até o limite de lances.
 
 ### 5.4 Validação (`playSolverMove`)
 

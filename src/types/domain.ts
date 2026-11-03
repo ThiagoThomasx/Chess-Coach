@@ -228,6 +228,8 @@ export interface Exercise {
   sideToMove: Color;
   objective: string;
   theme: Theme;
+  /** Whose tactic the theme is: the player's missed one or the opponent's (then the task is a defense). */
+  motifSide?: 'own' | 'opponent';
   skill: Skill;
   bestMove: AcceptableMove;
   acceptableMoves: AcceptableMove[];

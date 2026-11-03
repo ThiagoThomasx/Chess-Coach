@@ -16,6 +16,8 @@ export interface CandidateCheck {
 }
 
 const TACTICAL: readonly Theme[] = ['missed_mate', 'missed_capture', 'fork', 'missed_check'];
+/** Themes whose objective text already describes a defense. */
+const DEFENSIVE_OBJECTIVE: readonly Theme[] = ['allowed_mate', 'mate_threat', 'defense', 'hanging_piece', 'ignored_threat', 'removed_defender'];
 
 /** Minimum quality criteria a position must pass to become an exercise. */
 export function checkCandidate(review: MoveReview, before: PositionAnalysis | null, thresholds: ClassificationThresholds = DEFAULT_THRESHOLDS): CandidateCheck {
@@ -64,7 +66,8 @@ export function estimateDifficulty(fen: string, solution: readonly string[], the
   return Math.max(1, Math.min(5, Math.round(d)));
 }
 
-function objectiveFor(theme: Theme, mateIn?: number): string {
+function objectiveFor(theme: Theme, mateIn?: number, motifSide?: 'own' | 'opponent'): string {
+  if (motifSide === 'opponent' && !DEFENSIVE_OBJECTIVE.includes(theme)) return 'Encontre um lance que evite a tática do adversário.';
   switch (theme) {
     case 'missed_mate':
       return mateIn ? `Encontre o mate em ${mateIn}.` : 'Encontre o mate forçado.';
@@ -110,6 +113,7 @@ export function buildExercise({ game, review, before, replyLine, tolerance = DEF
   const concepts = detectConcepts(review, replyLine);
   // From the solver's view, an error that lost material becomes "find the safe move".
   const theme: Theme = concepts[0]?.theme ?? 'positional';
+  const motifSide = concepts[0]?.side;
   const acceptable = acceptableMovesFrom(before, tolerance);
   const bestMove = acceptable[0];
   if (!bestMove) return null;
@@ -124,8 +128,9 @@ export function buildExercise({ game, review, before, replyLine, tolerance = DEF
     gameId: game.id,
     ply: review.ply,
     sideToMove: review.color,
-    objective: objectiveFor(theme, mateIn),
+    objective: objectiveFor(theme, mateIn, motifSide),
     theme,
+    ...(motifSide ? { motifSide } : {}),
     skill: THEME_SKILL[theme],
     bestMove,
     acceptableMoves: acceptable,
@@ -172,8 +177,8 @@ const OBJECTIVE_BY_KIND = {
 export async function withSolutionTree(ex: Exercise, engine: EngineLike, opts: TreeOptions): Promise<Exercise> {
   const best = ex.referenceLines[0];
   if (!best) return ex;
-  const goal = goalFor(ex.fen, best, ex.theme, opts.tolerance);
-  const built = await buildSolutionTree(engine, ex.fen, goal, opts);
+  const goal = goalFor(ex.fen, best, ex.theme, opts.tolerance, ex.motifSide);
+  const built = await buildSolutionTree(engine, ex.fen, goal, opts, ex.bestMove.uci);
   const accepted = built.accepted.length ? built.accepted : ex.acceptableMoves;
   // A tree with an empty root cannot be solved; fall back to the review's accepted moves.
   const tree = built.accepted.length ? built : { ...built, accepted };

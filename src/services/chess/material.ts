@@ -108,6 +108,20 @@ export function settledSwing(fen: string, line: readonly string[], color: Color,
   return { delta: materialBalance(chess.fen(), color) - start, plies, settled: !lastNoisy || chess.isGameOver() };
 }
 
+/**
+ * Plies of `line` needed to reach a settled gain of at least `threshold`:
+ * the first cut-off whose quiet point already holds the gain (pending
+ * recaptures included). Null when no cut-off does.
+ */
+export function gainPlies(fen: string, line: readonly string[], color: Color, threshold = 2): number | null {
+  for (let k = 1; k <= line.length; k++) {
+    const s = settledSwing(fen, line, color, k);
+    if (s.settled && s.delta >= threshold) return s.plies;
+    if (s.plies < k) break;
+  }
+  return null;
+}
+
 export function pieceAt(fen: string, square: Square): { type: PieceSymbol; color: Color } | null {
   const p = new Chess(fen).get(square);
   return p ? { type: p.type, color: p.color } : null;

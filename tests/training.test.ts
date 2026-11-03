@@ -54,6 +54,25 @@ describe('exercise generation', () => {
     expect(ex.difficulty).toBeLessThanOrEqual(5);
   });
 
+  it("an exercise from the opponent's fork asks for a defense, not a material win (M1)", () => {
+    const fen = '3qk3/8/8/8/3n4/8/2Q5/R3K3 w Q - 0 1';
+    const pos: PositionAnalysis = {
+      fen, depth: 16, multiPv: 3, complete: true, timeMs: 1,
+      lines: [
+        { multipv: 1, score: cp(0), pv: ['e1f1'], depth: 16 },
+        { multipv: 2, score: cp(-900), pv: ['c2h2', 'd4f3'], depth: 16 },
+      ],
+    };
+    const qh2 = { ply: 1, san: 'Qh2', uci: 'c2h2', from: 'c2' as const, to: 'h2' as const, color: 'w' as const, fenBefore: fen, fenAfter: applyUci(fen, 'c2h2')! };
+    const afterQh2: PositionAnalysis = { fen: qh2.fenAfter, depth: 16, multiPv: 1, complete: true, timeMs: 1, lines: [{ multipv: 1, score: cp(-900), pv: ['d4f3', 'e1e2', 'f3h2', 'a1a7', 'd8d2'], depth: 16 }] };
+    const r = reviewMove(qh2, pos, afterQh2)!;
+    const ex = buildExercise({ game, review: r, before: pos, replyLine: afterQh2.lines[0]!.pv, tolerance: 5, now: 1 })!;
+    expect(ex.theme).toBe('fork');
+    expect(ex.motifSide).toBe('opponent');
+    expect(ex.objective).not.toMatch(/ganha material/);
+    expect(ex.objective).toMatch(/advers/);
+  });
+
   it('never accepts the move that was actually played', () => {
     const lax = { ...before, lines: [...before.lines, { multipv: 4, score: cp(44), pv: ['f3d4'], depth: 16 }] };
     expect(buildExercise({ game, review, before: lax, replyLine: [], tolerance: 5 })).toBeNull();

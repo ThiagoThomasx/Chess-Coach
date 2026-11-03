@@ -1,6 +1,6 @@
 import type { AcceptableMove, Color, Exercise, ExerciseGoal, ExerciseKind, PositionAnalysis, ReplyBranch, Score, SolutionNode, Theme } from '../../types/domain';
 import { applyUci, sideToMove, terminalState, uciToSan } from '../chess/position';
-import { settledSwing } from '../chess/material';
+import { gainPlies, settledSwing } from '../chess/material';
 import { matedScore, winPercentFor } from '../analysis/evaluation';
 import type { EngineLike } from '../analysis/gameAnalyzer';
 
@@ -56,7 +56,7 @@ function terminalScore(fen: string): Score | null {
  * the user moves needed to reach a settled material gain in the best line,
  * the theme, and the win expectancy.
  */
-export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme: Theme, tolerance: number): ExerciseGoal {
+export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme: Theme, tolerance: number, motifSide?: 'own' | 'opponent'): ExerciseGoal {
   const me = stm(fen);
   const targetWin = winPercentFor(best.score, me);
   if (best.score.kind === 'mate' && (me === 'w' ? best.score.value > 0 : best.score.value < 0)) {
@@ -64,10 +64,13 @@ export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme
     return { kind: 'mate', maxUserMoves: Math.min(n, MAX_SEQUENCE_MOVES), targetWin, mateIn: n };
   }
   const defensive: Theme[] = ['allowed_mate', 'mate_threat', 'defense', 'ignored_threat', 'hanging_piece', 'removed_defender', 'pin'];
-  if (defensive.includes(theme)) return { kind: 'defense', maxUserMoves: 1, targetWin };
+  // The opponent's tactic is something to prevent: the task is the defense.
+  if (motifSide === 'opponent' || defensive.includes(theme)) return { kind: 'defense', maxUserMoves: 1, targetWin };
   const swing = settledSwing(fen, best.pv, me);
-  if (swing.settled && swing.delta >= 2) {
-    const userMoves = Math.max(1, Math.min(3, Math.ceil(swing.plies / 2)));
+  const toGain = gainPlies(fen, best.pv, me);
+  if (swing.settled && swing.delta >= 2 && toGain !== null) {
+    // Length up to where the gain happens, not the measuring horizon.
+    const userMoves = Math.max(1, Math.min(3, Math.ceil(toGain / 2)));
     return { kind: userMoves > 1 ? 'sequence' : 'single', maxUserMoves: userMoves, targetWin };
   }
   if (targetWin >= 80 && targetWin - tolerance >= 70) return { kind: 'conversion', maxUserMoves: 2, targetWin };
@@ -80,14 +83,16 @@ export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme
  * into up to MAX_REPLY_BRANCHES equally good opponent defenses, recursively,
  * until the goal's move limit. Other accepted moves are validated live.
  */
-export async function buildSolutionTree(engine: EngineLike, fen: string, goal: ExerciseGoal, opts: TreeOptions): Promise<SolutionNode> {
+export async function buildSolutionTree(engine: EngineLike, fen: string, goal: ExerciseGoal, opts: TreeOptions, preferredFirst?: string): Promise<SolutionNode> {
   const isMate = goal.kind === 'mate';
   const limit = Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES);
   // Mate budget can exceed the move limit (mate in 6 is played for 4 moves).
   const firstBudget = mateBudget(goal, 0);
   const node = async (pos: string, movesLeft: number, budget: number, isRoot: boolean): Promise<SolutionNode> => {
     const a = await engine.analyze({ fen: pos, depth: opts.depth, multiPv: opts.multiPv });
-    const accepted = acceptedFrom(a, opts.tolerance, isMate ? budget : undefined);
+    const found = acceptedFrom(a, opts.tolerance, isMate ? budget : undefined);
+    // Tied moves can come back reordered: keep the analysis main move first when it is still accepted.
+    const accepted = isRoot && preferredFirst ? preferFirst(found, preferredFirst) : found;
     const out: SolutionNode = { fen: pos, accepted, replies: {}, depth: a.depth };
     if (movesLeft <= 1) return out;
     for (const move of accepted.slice(0, isRoot ? MAX_ROOT_EXPANSIONS : 1)) {
@@ -108,6 +113,11 @@ export async function buildSolutionTree(engine: EngineLike, fen: string, goal: E
     return out;
   };
   return node(fen, limit, firstBudget, true);
+}
+
+function preferFirst(moves: AcceptableMove[], uci: string): AcceptableMove[] {
+  const i = moves.findIndex((m) => m.uci === uci);
+  return i <= 0 ? moves : [moves[i] as AcceptableMove, ...moves.slice(0, i), ...moves.slice(i + 1)];
 }
 
 /** Solver moves within which a mate goal must still force mate, after `userMoves` moves. */

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { goalFor, legacyTree, mainLine, mateBudget, normalizeExercise, playSolverMove, type SolveState } from '../src/services/exercises/sequence';
 import type { EngineLike } from '../src/services/analysis/gameAnalyzer';
+import { withSolutionTree } from '../src/services/exercises/generate';
+import { Chess } from 'chess.js';
 import { applyUci, terminalState } from '../src/services/chess/position';
 import { mateInOne } from '../src/services/chess/tactics';
 import type { Exercise, ExerciseGoal, Score, SolutionNode } from '../src/types/domain';
 
 const mate = (n: number): Score => ({ kind: 'mate', value: n });
 const cp = (v: number): Score => ({ kind: 'cp', value: v });
+const legalUcis = (fen: string): string[] => new Chess(fen).moves({ verbose: true }).map((m) => m.from + m.to + (m.promotion ?? ''));
 
 // Two rooks vs king: 1.Ra7 or 1.Rb7 mate in two; Black has two king moves (Kf8, Kh8).
 const ROOKS = '6k1/8/8/8/8/8/1R6/R5K1 w - - 0 1';
@@ -135,6 +138,34 @@ describe('goals and legacy exercises', () => {
     expect(goalFor('2q3k1/8/8/3N4/8/8/8/6K1 w - - 0 1', { score: cp(900), pv: ['d5e7', 'g8f8', 'e7c8', 'f8e8'] }, 'fork', 5)).toMatchObject({ kind: 'sequence', maxUserMoves: 2 });
     expect(goalFor(ROOKS, { score: cp(20), pv: ['g1g2'] }, 'hanging_piece', 5).kind).toBe('defense');
     expect(goalFor('4k3/pp6/8/8/8/8/PP2Q3/4K3 w - - 0 1', { score: cp(900), pv: ['e2b5'] }, 'positional', 5).kind).toBe('conversion');
+  });
+
+  it('measures the sequence up to the ply where the gain happens, not the measuring horizon (A4)', () => {
+    // Free queen: Rxd5 wins it at once; the following king moves are not part of the task.
+    expect(goalFor('4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1', { score: cp(900), pv: ['d2d5', 'e8e7', 'e1d2', 'e7f6', 'd2e3'] }, 'missed_capture', 5)).toMatchObject({ kind: 'single', maxUserMoves: 1 });
+    // Two checks, then the rook falls: three user moves.
+    expect(goalFor('7k/8/8/r7/8/8/8/3Q3K w - - 0 1', { score: cp(900), pv: ['d1d4', 'h8g8', 'd4d8', 'g8f7', 'd8a5', 'f7e6'] }, 'combination', 5)).toMatchObject({ kind: 'sequence', maxUserMoves: 3 });
+  });
+
+  it("an opponent's motif makes a defensive goal (M1)", () => {
+    expect(goalFor('3qk3/8/8/8/3n4/8/2Q5/R3K3 w Q - 0 1', { score: cp(0), pv: ['e1f1'] }, 'fork', 5, 'opponent').kind).toBe('defense');
+  });
+
+  it('keeps the analysis main move first when the tree search ties it with another (B5)', async () => {
+    const engine: EngineLike = {
+      analyze: async ({ fen }) => {
+        const lines =
+          fen === ROOKS
+            ? [{ multipv: 1, depth: 16, score: mate(2), pv: ['b2b7'] }, { multipv: 2, depth: 16, score: mate(2), pv: ['a1a7'] }]
+            : (mateInOne(fen).length ? mateInOne(fen) : legalUcis(fen)).map((u, i) => ({ multipv: i + 1, depth: 16, score: mate(1), pv: [u] }));
+        return { fen, depth: 16, multiPv: lines.length, timeMs: 0, complete: true, lines } as never;
+      },
+    } as EngineLike;
+    const ex = exercise({ goal: undefined, tree: undefined, kind: undefined, referenceLines: [{ multipv: 1, depth: 16, score: mate(2), pv: ['a1a7', 'g8f8', 'b2b8'] }] });
+    const built = await withSolutionTree(ex, engine, { depth: 16, multiPv: 3, tolerance: 5 });
+    expect(built.tree?.accepted[0]?.uci).toBe('a1a7');
+    expect(built.bestMove.uci).toBe('a1a7');
+    expect(built.solutionLine[0]).toBe('a1a7');
   });
 
   it('converts a v1 exercise (single line) into a tree', () => {

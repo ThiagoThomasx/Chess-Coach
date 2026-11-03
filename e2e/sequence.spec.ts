@@ -80,6 +80,8 @@ async function seed(page: import('@playwright/test').Page, ex: typeof exercise):
 test('a two-move exercise continues after the first correct move and is solved on the board', async ({ page }) => {
   await seed(page, exercise);
   await page.goto('/#/train/seq-e2e');
+  // The theme is hidden until the attempt ends (audit M1).
+  await expect(page.getByTestId('exercise-title')).toHaveText('Exercício');
   await expect(page.getByTestId('sequence-progress')).toContainText('Mate · lance 1 de 2');
   await playMove(page, 'exercise-board', 'a1a7');
   await expect(page.getByTestId('exercise-feedback')).toContainText(/O adversário responde (Kf8|Kh8)/);
@@ -89,6 +91,7 @@ test('a two-move exercise continues after the first correct move and is solved o
   await expect(page.getByTestId('exercise-feedback')).toContainText('xeque-mate');
   await expect(page.getByTestId('next-review')).toContainText('Próxima revisão');
   await expect(page.getByText('✓ acerto')).toBeVisible();
+  await expect(page.getByTestId('exercise-title')).toHaveText('Mate disponível');
 });
 
 test('hint 1 is informative and solving again right after the answer is only practice (audit A1/A5)', async ({ page }) => {

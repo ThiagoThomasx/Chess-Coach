@@ -48,7 +48,10 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
           <Link to="/train" className="small row">
             <ArrowLeft size={14} /> Treino
           </Link>
-          <h1 style={{ marginTop: '0.3rem' }}>{THEME_LABEL[ex.theme]}</h1>
+          {/* The theme gives the motif away: it is shown only once an attempt has ended. */}
+          <h1 style={{ marginTop: '0.3rem' }} data-testid="exercise-title">
+            {done || attempts.length > 0 ? THEME_LABEL[ex.theme] : 'Exercício'}
+          </h1>
           <p>{ex.objective}</p>
         </div>
         <div className="row">
