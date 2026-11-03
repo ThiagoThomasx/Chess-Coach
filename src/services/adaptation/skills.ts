@@ -1,5 +1,7 @@
 import type { Attempt, ConfidenceLevel, Exercise, MoveReview, Skill, SkillEstimate, SkillEvent } from '../../types/domain';
+import { hasMateFor } from '../analysis/evaluation';
 import { gamePhase, settledSwing } from '../chess/material';
+import { legalMoveCount } from '../chess/position';
 import { enPrise } from '../chess/tactics';
 import { detectConcepts, THEME_SKILL } from '../pedagogy/concepts';
 import { DAY_MS } from '../scheduling/srs';
@@ -63,6 +65,8 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
     if (r.color !== userColor) continue;
     const o = phaseOutcome(r.classification);
     if (o === null) continue;
+    // A forced move, or one inside an already forced mate, measures nothing positive.
+    if (o > 0 && !hadRealChoice(r)) continue;
     const ref = { gameId, ply: r.ply };
     const ev = (skill: Skill, outcome: number, weight: number): SkillEvent => ({ skill, at, outcome, weight, independent: true, source: 'game', ref });
     events.push(ev(PHASE_SKILL[gamePhase(r.fenBefore, r.ply)], o, WEIGHTS.gamePhase));
@@ -77,7 +81,8 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
       const best = settledSwing(r.fenBefore, r.bestLine, r.color);
       if (best.settled && best.delta >= 2) events.push(ev('tactics', 1, WEIGHTS.gameOpportunity));
       if (r.flags.includes('mate_found')) events.push(ev('patterns', 1, WEIGHTS.gameOpportunity));
-      if (r.flags.includes('defense_needed')) events.push(ev('defense', 1, WEIGHTS.gameOpportunity));
+      // Defense: the only move that kept a position the mover was not winning.
+      if (r.flags.includes('only_move') && r.winBefore < DEFENSE_MAX_WIN) events.push(ev('defense', 1, WEIGHTS.gameOpportunity));
       // Legal-capture threats (SEE > 0) only; geometric attacks by pinned pieces do not count.
       const threatened = enPrise(r.fenBefore, r.color).length > 0;
       const stillThreatened = enPrise(r.fenAfter, r.color).length > 0;
@@ -85,6 +90,15 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
     }
   }
   return capPerSkill(events, MAX_GAME_WEIGHT_PER_SKILL);
+}
+
+/** Below this win expectancy (mover POV) holding the position counts as defending. */
+const DEFENSE_MAX_WIN = 60;
+
+/** The mover had more than one legal move and was not already mated by force. */
+function hadRealChoice(r: MoveReview): boolean {
+  const opponent = r.color === 'w' ? 'b' : 'w';
+  return legalMoveCount(r.fenBefore) > 1 && !hasMateFor(r.evalBefore, opponent);
 }
 
 /** One game contains few examples of each theme: its total weight per skill is capped. */
@@ -213,6 +227,11 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
     targetDifficulty: target,
     ...(lastAt !== undefined ? { lastAt } : {}),
   };
+}
+
+/** With insufficient evidence the point estimate is noise: show only the interval. */
+export function hasPointEstimate(s: SkillEstimate): boolean {
+  return s.level !== null && s.confidence !== 'insufficient';
 }
 
 function distinctIndependent(ex: readonly SkillEvent[]): number {

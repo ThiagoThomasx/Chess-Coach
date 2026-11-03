@@ -38,6 +38,9 @@ export interface ClassifyResult {
   reason?: string;
 }
 
+/** Mover's win expectancy at or below which the position counts as already lost. */
+export const LOST_WIN_PERCENT = 5;
+
 /** Positional state buckets on mover's win expectancy. */
 export type Standing = 'winning' | 'advantage' | 'equal' | 'worse' | 'losing';
 
@@ -112,7 +115,8 @@ export function classifyMove(input: ClassifyInput): ClassifyResult {
   if (input.playedIsBest) {
     classification = 'best';
   } else if (allowsMate) {
-    classification = 'blunder';
+    // From an already lost position the result barely changes: the flag stays, the label softens.
+    classification = winBefore <= LOST_WIN_PERCENT ? 'inaccuracy' : 'blunder';
   } else if (hadMate && !keepsMate) {
     // Missing a forced mate: severity depends on what is left.
     classification = winAfter >= 80 ? 'inaccuracy' : winAfter >= 60 ? 'mistake' : 'blunder';

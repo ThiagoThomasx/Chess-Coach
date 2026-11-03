@@ -78,6 +78,9 @@ test('import → analyze → explain → exercise → solve → reload → profi
   await page.goto('/#/progress');
   await expect(page.getByTestId('skill-threats')).toContainText(/evidência/);
   await expect(page.getByTestId('skill-threats')).not.toContainText('Sem dados');
+  // One game is too little evidence for a point estimate: only the interval is shown (audit B4).
+  await expect(page.getByTestId('skill-threats')).toContainText(/entre \d+% e \d+%/);
+  await expect(page.getByTestId('skill-threats').locator('.pt')).toHaveCount(0);
 
   expect(external, 'no requests to external hosts').toEqual([]);
   expect(errors, 'no console errors').toEqual([]);

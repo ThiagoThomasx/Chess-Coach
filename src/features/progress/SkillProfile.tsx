@@ -1,6 +1,6 @@
 import { TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import type { SkillEstimate } from '../../types/domain';
-import { CONFIDENCE_LABEL, SKILL_LABEL } from '../../services/adaptation/skills';
+import { CONFIDENCE_LABEL, hasPointEstimate, SKILL_LABEL } from '../../services/adaptation/skills';
 
 type Props = { profile: readonly SkillEstimate[] };
 
@@ -32,13 +32,16 @@ export function SkillProfile({ profile }: Props) {
               <span className="xs faint">Sem dados</span>
             ) : (
               <>
-                <div className="skill-meter" title={`Estimativa ${pct(s.level)}; intervalo de 90%: ${pct(s.interval[0])}–${pct(s.interval[1])}`}>
+                <div
+                  className="skill-meter"
+                  title={hasPointEstimate(s) ? `Estimativa ${pct(s.level)}; intervalo de 90%: ${pct(s.interval[0])}–${pct(s.interval[1])}` : `Poucas evidências para uma estimativa; intervalo de 90%: ${pct(s.interval[0])}–${pct(s.interval[1])}`}
+                >
                   <span className="ci" style={{ left: `${s.interval[0] * 100}%`, width: `${(s.interval[1] - s.interval[0]) * 100}%` }} />
-                  <span className="pt" style={{ left: `${s.level * 100}%` }} />
+                  {hasPointEstimate(s) && <span className="pt" style={{ left: `${s.level * 100}%` }} />}
                 </div>
                 <div className="row xs muted" style={{ marginTop: '0.3rem' }}>
                   <span className="mono">
-                    {pct(s.level)} ({pct(s.interval[0])}–{pct(s.interval[1])})
+                    {hasPointEstimate(s) ? `${pct(s.level)} (${pct(s.interval[0])}–${pct(s.interval[1])})` : `entre ${pct(s.interval[0])} e ${pct(s.interval[1])}`}
                   </span>
                   <span>recente {pct(s.recentRate)}</span>
                   {s.independentRate !== null && <span>sem dica {pct(s.independentRate)}</span>}

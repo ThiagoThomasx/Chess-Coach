@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateSkill, estimateProfile, exerciseOutcome, eventsFromAttempt, targetDifficulty, eventsFromGame } from '../src/services/adaptation/skills';
+import { estimateSkill, estimateProfile, exerciseOutcome, eventsFromAttempt, targetDifficulty, eventsFromGame, hasPointEstimate } from '../src/services/adaptation/skills';
 import { nextTraining, errorThemes } from '../src/services/recommendations/recommend';
 import { applyUci } from '../src/services/chess/position';
 import { DAY_MS } from '../src/services/scheduling/srs';
@@ -94,6 +94,45 @@ describe('skill profile', () => {
     expect(events.every((e) => e.ref.gameId === 'g1' && e.ref.ply === 5)).toBe(true);
     expect(events.map((e) => e.skill)).toContain('threats');
     expect(events.find((e) => e.skill === 'threats')?.outcome).toBe(0);
+  });
+
+  describe('no positive evidence without a real choice (A6)', () => {
+    const review = (fenBefore: string, uci: string, over: Partial<MoveReview>): MoveReview => ({
+      ply: 12, san: '', uci, color: 'b', fenBefore, fenAfter: applyUci(fenBefore, uci)!, evalBefore: { kind: 'cp', value: 0 }, evalAfter: { kind: 'cp', value: 0 },
+      bestLine: [uci], winBefore: 50, winAfter: 50, winLoss: 0, classification: 'best', flags: [], depth: 16, ...over,
+    });
+    const positives = (r: MoveReview) => eventsFromGame('g', [r], {}, r.color, NOW).filter((e) => e.outcome > 0);
+
+    it('Légal 6…Ke7, the only legal move, yields no positive event', () => {
+      const r = review('rn1qkbnr/ppp2B1p/3p2p1/4N3/4P3/2N5/PPPP1PPP/R1BbK2R b KQkq - 0 6', 'e8e7', {
+        evalBefore: { kind: 'mate', value: 1 }, evalAfter: { kind: 'mate', value: 1 }, winBefore: 0, winAfter: 0, bestLine: ['e8e7', 'c3d5'], flags: ['defense_needed'],
+      });
+      expect(positives(r)).toEqual([]);
+    });
+
+    it('Ópera 16…Nxb8, the only legal move before mate, yields no tactics or defense event', () => {
+      const r = review('1Q2kb1r/p2n1ppp/4q3/4p1B1/4P3/8/PPP2PPP/2KR4 b k - 1 16', 'd7b8', {
+        evalBefore: { kind: 'mate', value: 1 }, evalAfter: { kind: 'mate', value: 1 }, winBefore: 0, winAfter: 0, bestLine: ['d7b8', 'd1d8'], flags: ['defense_needed'],
+      });
+      expect(positives(r)).toEqual([]);
+    });
+
+    it('moves inside an already forced mate yield no positive event even with several legal moves', () => {
+      const r = review('8/8/8/3k4/8/8/8/K5Q1 b - - 0 1', 'd5e4', {
+        evalBefore: { kind: 'mate', value: 9 }, evalAfter: { kind: 'mate', value: 9 }, winBefore: 0, winAfter: 0, classification: 'good', flags: ['defense_needed'],
+      });
+      expect(positives(r)).toEqual([]);
+    });
+
+    it('the only move that holds a balanced position counts as defense', () => {
+      const r = review('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', 'e7e5', { winBefore: 45, winAfter: 45, flags: ['only_move'] });
+      expect(positives(r).map((e) => e.skill)).toContain('defense');
+    });
+  });
+
+  it('shows a point estimate only once the evidence is not insufficient (B4)', () => {
+    expect(hasPointEstimate(estimateSkill('tactics', [ev(0, 1)], NOW))).toBe(false);
+    expect(hasPointEstimate(estimateSkill('tactics', [ev(1, 1), ev(1, 2), ev(0, 3)], NOW))).toBe(true);
   });
 
   it('caps the weight one game can add to a skill', () => {

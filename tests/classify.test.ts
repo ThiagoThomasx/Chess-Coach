@@ -81,6 +81,19 @@ describe('move classification', () => {
     expect(classifyMove({ ...base, color: 'w', before: mate(-5), after: mate(-5), playedIsBest: true }).classification).toBe('best');
   });
 
+  it('allowing mate from an already lost position is at most an inaccuracy, keeping the flag (M6)', () => {
+    // Ópera 15…Nxd7: +11.4 → mate in 2 against Black.
+    const opera = classifyMove({ ...base, color: 'b', before: cp(1140), after: mate(2) });
+    expect(opera.classification).toBe('inaccuracy');
+    expect(opera.flags).toContain('allowed_mate');
+    // Byrne 36.Kf1: −20.5 → mate in 5 against White.
+    const byrne = classifyMove({ ...base, color: 'w', before: cp(-2050), after: mate(-5) });
+    expect(byrne.classification).toBe('inaccuracy');
+    expect(byrne.flags).toContain('allowed_mate');
+    // A position that was merely worse still makes allowing mate a blunder.
+    expect(classifyMove({ ...base, color: 'w', before: cp(-300), after: mate(-4) }).classification).toBe('blunder');
+  });
+
   it('several equally good moves: an alternative with the same score is "best", a near-equal one "excellent"', () => {
     expect(classifyMove({ ...base, color: 'w', before: cp(30), after: cp(30), playedIsBest: true }).classification).toBe('best');
     expect(classifyMove({ ...base, color: 'w', before: cp(30), after: cp(22) }).classification).toBe('excellent');

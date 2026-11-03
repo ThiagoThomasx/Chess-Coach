@@ -33,7 +33,7 @@ Para o lance *i* (da posição *P(i−1)* para *P(i)*):
 
 Regras de mate (precedem a tabela):
 
-- **Permitiu mate**: depois do lance o adversário tem mate forçado que não tinha antes → erro grave.
+- **Permitiu mate**: depois do lance o adversário tem mate forçado que não tinha antes → erro grave. Se a posição já estava perdida (expectativa ≤ 5% antes do lance), no máximo imprecisão; o marcador "permitiu mate" é mantido.
 - **Mate perdido**: havia mate forçado e ele desapareceu → imprecisão se a posição continua vencedora (≥ 80%), erro se ≥ 60%, senão erro grave.
 - **Mate mais lento**: continua havendo mate, só mais longo → no máximo "bom".
 - **Já perdido por mate forçado**: se o adversário já tinha mate forçado antes e continua tendo depois, o resultado não muda → "bom" (nunca "excelente" nem erro); o melhor lance de defesa continua "melhor lance".
@@ -160,7 +160,7 @@ Competências: visão tática, cálculo, identificação de ameaças, defesa, es
 | Exercício | 1 (1/k na k-ésima tentativa do mesmo exercício) | 1 sem dica; 1 − 0,25·dicas (mín. 0,25) com dica; 0 se errou ou viu a solução. Exercícios com sequência ≥ 3 meias-jogadas também contam para "cálculo" (peso 0,5) |
 | Lance de partida (fase: abertura/meio-jogo/final) | 0,2 | 1 bom+, 0,5 imprecisão, 0 erro |
 | Erro de partida com conceito verificado | 0,5 | 0 na competência do conceito |
-| Oportunidade aproveitada (ganho ≥ 2 encontrado, mate encontrado, defesa necessária encontrada, peça ameaçada salva) | 0,5 | 1 |
+| Oportunidade aproveitada (ganho ≥ 2 encontrado, mate encontrado, único lance que manteve uma posição não vencedora (< 60%) → defesa, peça ameaçada salva) | 0,5 | 1 |
 | Treino de abertura | 0,5 | 1 / 0 |
 
 **Estimativa**: Beta(1,1) + Σ peso_efetivo·resultado (α) e Σ peso_efetivo·(1−resultado) (β). Mostra-se a média e o intervalo de credibilidade de 90% (aproximação normal da Beta). Nenhum rating é inferido; nenhum dado inicial é exigido.
@@ -171,8 +171,11 @@ Competências: visão tática, cálculo, identificação de ameaças, defesa, es
 - Tentativas repetidas do **mesmo exercício** valem 1/k (k = ordem da tentativa): resolver 15 vezes a mesma posição soma ≈ 3,3, não 15.
 - Uma partida contribui com no máximo peso 1 por competência (uma partida tem poucos exemplos de cada tema).
 - Evidência de partida só é registrada a partir de conceitos **verificados** (§4.3) e de ameaças "en prise" reais (lances legais + SEE).
+- Nenhuma evidência **positiva** (nem de fase) vem de um lance sem escolha real: único lance legal, ou posição em que o adversário já tinha mate forçado antes do lance.
 
 **Confiança**: menos de 2 de peso efetivo → poucas evidências; menos de 6 → evidências iniciais; última evidência há > 30 dias (com ≥ 6 de peso bruto) ou taxa recente (últimos 8 eventos) 20 p.p. abaixo da média → precisa revisar; peso ≥ 10, média ≥ 75%, limite inferior ≥ 60% **e** acertos independentes em ≥ 5 exercícios distintos → domínio provisório; senão desempenho consistente.
+
+**Exibição**: com poucas evidências, o perfil mostra só o intervalo ("entre X% e Y%"), sem o número central.
 
 **Tendência**: compara os últimos 8 eventos com os 8 anteriores (≥ 4); diferença > 10 p.p. → subindo/caindo.
 
