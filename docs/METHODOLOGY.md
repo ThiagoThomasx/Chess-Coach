@@ -76,14 +76,16 @@ Tudo é derivado da geração de lances **legais** do chess.js — uma peça cra
 
 ### 4.3 Conceitos (`services/pedagogy/concepts.ts`)
 
-Ordem de detecção (o primeiro vira o tema principal):
+Ordem de detecção (depois, os conceitos **verificados** passam à frente dos não verificados, mantendo a ordem entre si; o primeiro vira o tema principal):
 
 1. **Mate**: mate permitido / mate disponível (marcadores do motor + mate em 1 exato; indica se já havia ameaça de mate em 1 antes do lance).
 2. **Captura que perde material**: o lance jogado é captura com SEE < 0 **e** a linha do motor confirma perda ≥ 2 em ponto estável.
-3. **Material perdido para a resposta** (linha do adversário perde ≥ 2): motivo do adversário — ataque duplo, ataque descoberto, desvio, sobrecarga, cravada (a peça perdida está cravada e "en prise"), peça desprotegida (a peça movida ficou "en prise"), ameaça não respondida (já estava "en prise" antes), defensor removido (a peça movida era recapturadora legal).
+3. **Material perdido para a resposta** (linha do adversário ganha ≥ 1 ponto): motivo do adversário — ataque duplo, ataque descoberto, desvio, sobrecarga, cravada (a peça perdida está cravada e "en prise", ou a resposta cria a cravada e a linha captura a peça cravada; nesse caso o texto usa o futuro: "o adversário pode cravar…"), peça desprotegida (a peça movida ficou "en prise"), ameaça não respondida (já estava "en prise" antes), defensor removido (a peça movida era recapturadora legal). Sem padrão reconhecido, vira "combinação" do adversário, descrita como fato e consequência (nunca como "por que a alternativa é superior").
 4. **Oportunidade perdida** (a melhor linha ganha ≥ 2 em ponto estável e mais que o lance jogado): motivo do jogador — ataque descoberto, ataque duplo, desvio, sobrecarga, cravada nova, captura com SEE ≥ 2, xeque, ou "combinação" (ganho confirmado sem padrão reconhecido).
 5. **Defesa**: mate forçado contra; defesa necessária.
-6. **Posicional** (sem evidência material): conversão (posição vencedora ≥ 80%), abertura, final ou posicional — sempre **limitado**.
+6. **Posicional** (sem evidência material): conversão (posição vencedora ≥ 80%), abertura, final ou posicional — sempre **limitado**. O texto nunca afirma ausência de tática: diz que o ChessQuest não reconheceu um padrão simples e informa o que foi medido (quantas meias-jogadas, ou que a linha não estabilizou e o material não foi verificado).
+
+Cravadas de peão na própria coluna não contam como cravada (o peão só avança pela coluna). Uma cravada só explica um ganho se a linha do motor capturar a peça cravada.
 
 Um conceito é **verificado** apenas quando todos os fatos citados vêm de lances legais e de linhas do motor medidas em ponto estável. Caso contrário a interface mostra a explicação como limitada.
 

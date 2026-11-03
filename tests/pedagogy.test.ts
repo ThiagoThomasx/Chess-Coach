@@ -138,3 +138,76 @@ describe('explanations', () => {
     expect(source).not.toMatch(/aten[cç][aã]o|distra|pressa|descuid|nervos|esqueceu|não viu|cansa|desleix/i);
   });
 });
+
+// Sprint 3 audit, phase 2: explanations must not deny tactics that exist.
+const NEGATIONS = /sem um motivo tático|Não há perda|sem perda imediata/i;
+const LEGAL_G6 = 'rn1qkbnr/ppp2ppp/3p4/4p3/2B1P1b1/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 3 4';
+
+describe('truthful fallbacks (audit A2)', () => {
+  it("Légal 4…g6: cites the pawn White wins instead of 'no tactical reason'", () => {
+    // 5.Nxe5 dxe5 6.Qxg4: the bishop on g4 falls once the knight unblocks d1–g4.
+    const r = review(LEGAL_G6, 'g7g6', 'g6', { ply: 8, evalBefore: cp(-40), evalAfter: cp(150), winBefore: 46, winAfter: 36, winLoss: 10, classification: 'mistake', bestLine: ['g8f6'], bestMoveSan: 'Nf6' });
+    const e = explainMove(r, ['f3e5', 'd6e5', 'd1g4', 'g8f6', 'g4e2', 'b8c6']);
+    const text = [e.whatHappened, e.why, e.consequence].join(' ');
+    expect(text).not.toMatch(NEGATIONS);
+    expect(e.theme).not.toBe('opening');
+    expect(e.skill).not.toBe('openings');
+    expect(text).toContain('Nxe5');
+    expect(text).toMatch(/1 ponto/);
+  });
+
+  it('a line that does not settle is reported as not verified, never as "no loss"', () => {
+    const e = explainMove(review('4k3/pp6/8/8/8/8/PP2Q3/4K3 w - - 0 1', 'e2e3', 'Qe3', { ply: 40, bestLine: ['e2b5'] }), ['e8d7']);
+    const text = [e.whatHappened, e.why].join(' ');
+    expect(text).not.toMatch(NEGATIONS);
+    expect(e.confidence).toBe('limited');
+  });
+
+  it('no fallback template asserts the absence of tactics', () => {
+    const source = readFileSync(new URL('../src/services/pedagogy/explain.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(NEGATIONS);
+  });
+});
+
+describe("opponent's lines are never presented as the better move (audit A3)", () => {
+  it('a combination by the opponent is a fact/consequence, not a "why"', () => {
+    // Légal again, but the motif detector finds no named pattern for Nxe5.
+    const r = review(LEGAL_G6, 'g7g6', 'g6', { ply: 8, classification: 'mistake', bestLine: ['g8f6'], bestMoveSan: 'Nf6' });
+    const e = explainMove(r, ['f3e5', 'd6e5', 'd1g4', 'g8f6', 'g4e2', 'b8c6']);
+    expect(e.why ?? '').not.toContain('Nxe5');
+  });
+
+  it('a verified concept is ranked before an unverified one', () => {
+    for (const fen of [LEGAL_G6, ITALIAN]) {
+      const cs = detectConcepts(review(fen, fen === ITALIAN ? 'f3d4' : 'g7g6', 'x', { ply: 8, bestLine: [] }), fen === ITALIAN ? ['e5d4', 'c2c3'] : ['f3e5', 'd6e5', 'd1g4', 'g8f6', 'g4e2', 'b8c6']);
+      const firstUnverified = cs.findIndex((c) => !c.verified);
+      const lastVerified = cs.map((c) => c.verified).lastIndexOf(true);
+      if (firstUnverified >= 0 && lastVerified >= 0) expect(lastVerified).toBeLessThan(firstUnverified);
+    }
+  });
+});
+
+describe('pin tense and gender (audit M2, B1)', () => {
+  it('a pin the opponent can still create is described in the future, naming the pinning move', () => {
+    const r = review('r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1', 'e1d2', 'Kd2', { bestLine: ['e1e2'] });
+    const e = explainMove(r, ['a8d8', 'd2e3', 'd8d5', 'e3e4', 'd5d1', 'e4e3']);
+    expect(e.theme).toBe('pin');
+    expect(e.whatHappened).not.toMatch(/está cravad/);
+    expect(e.whatHappened).toContain('Rd8');
+  });
+
+  it('feminine pieces get feminine articles and agreement', () => {
+    // The rook on a1 is attacked by the bishop and stays attacked.
+    const r = review('4k3/8/8/8/8/8/1b6/R3K3 w - - 0 1', 'e1e2', 'Ke2', { bestLine: ['a1a2'] });
+    const e = explainMove(r, ['b2a1', 'e2d3', 'a1e5', 'd3e4']);
+    expect(e.whatHappened).toMatch(/Sua torre/);
+    expect(e.whatHappened).toMatch(/capturada/);
+    expect(e.whatHappened).not.toMatch(/Seu torre|capturado/);
+  });
+
+  it('target lists use an article for every piece', () => {
+    const r = review('3qk3/8/8/8/3n4/8/2Q5/R3K3 w Q - 0 1', 'c2h2', 'Qh2', { bestLine: ['c2c3'] });
+    const e = explainMove(r, ['d4f3', 'e1e2', 'f3h2', 'a1a8', 'd8a8', 'e2e3']);
+    expect(e.whatHappened).toMatch(/o rei em e1 e a dama em h2/);
+  });
+});
