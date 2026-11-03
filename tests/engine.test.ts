@@ -96,6 +96,45 @@ describe('UciEngine', () => {
     await expect(e.analyze({ fen: '4k3/8/8/8/8/8/8/4K3 w - - 0 1' })).rejects.toThrow(/Worker indisponível/);
   });
 
+  describe('recovery (audit M5)', () => {
+    const FEN = '4k3/8/8/8/8/8/8/4K3 w - - 0 1';
+
+    it('restarts the engine after a crash, so the next analysis runs', async () => {
+      const created: ReturnType<typeof fakeTransport>[] = [];
+      const e = new UciEngine(() => {
+        const t = fakeTransport(standard, { crashOnGo: created.length === 0 });
+        created.push(t);
+        return t;
+      });
+      await expect(e.analyze({ fen: FEN, depth: 8 })).rejects.toMatchObject({ code: 'transport' });
+      const r = await e.analyze({ fen: FEN, depth: 8 });
+      expect(r.complete).toBe(true);
+      expect(created).toHaveLength(2);
+      expect(e.getState()).toBe('ready');
+    });
+
+    it('rejects a stalled search with "timeout" and keeps the queue going on a fresh engine', async () => {
+      const created: ReturnType<typeof fakeTransport>[] = [];
+      const e = new UciEngine(() => {
+        const t = fakeTransport(standard, { hangOnGo: created.length === 0 });
+        created.push(t);
+        return t;
+      }, { stallTimeoutMs: 50 });
+      const stalled = e.analyze({ fen: FEN, depth: 8 });
+      const next = e.analyze({ fen: '4k3/8/8/8/8/8/8/4K3 b - - 0 1', depth: 8 });
+      await expect(stalled).rejects.toMatchObject({ code: 'timeout' });
+      expect((await next).complete).toBe(true);
+      expect(created).toHaveLength(2);
+    });
+
+    it('refuses an illegal position without sending it to the engine', async () => {
+      const t = fakeTransport(standard);
+      const e = new UciEngine(() => t);
+      await expect(e.analyze({ fen: '8/8/8/3k4/8/8/8/K6Q w - - 0 1' })).rejects.toMatchObject({ code: 'invalid_position' });
+      expect(t.sent.some((c) => c.startsWith('go'))).toBe(false);
+    });
+  });
+
   it('rejects jobs after terminate()', async () => {
     const e = new UciEngine(() => fakeTransport(standard));
     await e.init();

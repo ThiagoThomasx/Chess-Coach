@@ -8,6 +8,8 @@ Este documento descreve as regras usadas para avaliar lances, gerar explicaçõe
 - O protocolo UCI reporta pontuações do ponto de vista **do lado que joga**. `UciEngine` converte tudo para o ponto de vista **das brancas** (`toWhitePov`) antes de armazenar. Nunca se subtraem avaliações de perspectivas diferentes: a comparação é feita sempre do ponto de vista de quem moveu (`povOf`, `winPercentFor`).
 - Pontuações de mate (`mate N`) são mantidas como `{ kind: 'mate' }` e **nunca** convertidas em centipawns. Uma posição de xeque-mate já no tabuleiro é codificada como mate com |valor| = 0,5.
 - Uma busca interrompida (`stop`) é marcada `complete: false` e não é reutilizada nem tratada como definitiva.
+- Posições impossíveis (número de reis ≠ 1 por lado, peão na 1ª/8ª fileira, mais de 8 peões, lado que não joga em xeque) são recusadas na importação do PGN e do backup, e nunca são enviadas ao motor: o chess.js aceita algumas delas e o Stockfish trava com elas.
+- Robustez: uma busca sem nenhuma saída do motor por 30 s é considerada travada. A busca é rejeitada (`timeout`), o worker é descartado e um novo é iniciado para as próximas posições da fila. Uma falha do worker durante a busca tem o mesmo tratamento. O indicador de estado do motor acompanha o reinício.
 - Cache: avaliações completas são guardadas por FEN (sem os contadores de lances). São reaproveitadas somente se a profundidade e o MultiPV armazenados forem ≥ aos pedidos. Limitação: ignorar o contador de 50 lances pode, em casos raros, reaproveitar uma avaliação de posição idêntica com relógio diferente.
 
 ## 2. Comparação de um lance

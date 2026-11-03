@@ -10,6 +10,7 @@ import { exportBackup, restoreBackup, validateBackup, clearData } from '../src/s
 import { emptyAnalysis } from '../src/services/analysis/gameAnalyzer';
 import { toggleRepertoire, recordOpeningAttempt, listRepertoire, addCustomOpening } from '../src/db/openingsRepo';
 import type { Exercise } from '../src/types/domain';
+import { normalizeExercise } from '../src/services/exercises/sequence';
 import { OPERA_GAME, SHORT_BLUNDER_GAME } from './fixtures';
 
 let n = 0;
@@ -168,6 +169,28 @@ describe('backup and restore', () => {
     }
     expect(await listGames()).toHaveLength(1);
     expect(validateBackup({ format: 'chessquest-backup', schemaVersion: 1, tables: { unknown: [] } }).errors[0]).toMatch(/desconhecida/);
+  });
+
+  it('a partial backup replaces only the tables it contains', async () => {
+    await importPgn(OPERA_GAME, 'a.pgn', []);
+    const r = await restoreBackup({ format: 'chessquest-backup', schemaVersion: 2, exportedAt: '', tables: { exercises: [exerciseFixture('g')] } });
+    expect(r.ok).toBe(true);
+    expect(await listGames()).toHaveLength(1);
+    expect(await getExercise('ex1')).toBeDefined();
+  });
+
+  it('restores a backup from an older schema with a pre-tree exercise', async () => {
+    const legacy = { ...exerciseFixture('g'), kind: undefined, goal: undefined, tree: undefined };
+    const r = await restoreBackup({ format: 'chessquest-backup', schemaVersion: 1, exportedAt: '', tables: { exercises: [JSON.parse(JSON.stringify(legacy))] } });
+    expect(r.ok).toBe(true);
+    const stored = await getExercise('ex1');
+    expect(stored?.tree).toBeUndefined();
+    expect(normalizeExercise(stored!).tree.accepted.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a backup game whose start position is impossible', () => {
+    const v = validateBackup({ format: 'chessquest-backup', schemaVersion: 2, tables: { games: [{ id: 'x', moves: [], startFen: '8/8/8/3k4/8/8/8/K6Q w - - 0 1' }] } });
+    expect(v.ok).toBe(false);
   });
 
   it('clears data selectively', async () => {

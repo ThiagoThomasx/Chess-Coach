@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parsePgnText, splitPgn, detectUserColor, buildHeaders } from '../src/services/pgn/parsePgn';
+import { positionProblem } from '../src/services/chess/position';
 import { OPERA_GAME, SHORT_BLUNDER_GAME } from './fixtures';
 
 describe('PGN import', () => {
@@ -68,5 +69,22 @@ describe('PGN import', () => {
   it('supports games starting from a custom FEN', () => {
     const r = parsePgnText('[SetUp "1"]\n[FEN "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1"]\n\n1. e4 Kd7 *');
     expect(r.games[0]?.startFen).toBe('4k3/8/8/8/8/8/4P3/4K3 w - - 0 1');
+  });
+});
+
+describe('illegal positions (audit M5)', () => {
+  it('names the problem of an impossible position', () => {
+    expect(positionProblem('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')).toBeNull();
+    expect(positionProblem('8/8/8/3k4/8/8/8/K6Q w - - 0 1')).toMatch(/xeque/);
+    expect(positionProblem('8/8/8/3k4/8/8/8/7Q w - - 0 1')).toMatch(/rei/);
+    expect(positionProblem('P3k3/8/8/8/8/8/8/4K3 w - - 0 1')).toMatch(/peão/);
+    expect(positionProblem('not a fen')).not.toBeNull();
+  });
+
+  it('refuses a PGN whose FEN tag is an impossible position, with the reason', () => {
+    const pgn = ['[White "A"]', '[Black "B"]', '[SetUp "1"]', '[FEN "8/8/8/3k4/8/8/8/K6Q w - - 0 1"]', '', '1. Qh5+ Kd4 *'].join('\n');
+    const r = parsePgnText(pgn);
+    expect(r.games).toHaveLength(0);
+    expect(r.failures[0]?.reason).toMatch(/Posição inicial impossível.*xeque/);
   });
 });
