@@ -9,7 +9,7 @@ import type {
   Score,
 } from '../../types/domain';
 import { replayGame, sideToMove, terminalState, uciToSan, type PlyInfo } from '../chess/position';
-import { materialSwingAlongLine } from '../chess/material';
+import { settledSwing } from '../chess/material';
 import { classifyMove, DEFAULT_THRESHOLDS } from './classify';
 import { matedScore, scoresEqual, winPercentFor } from './evaluation';
 import type { AnalyzeRequest } from '../engine/UciEngine';
@@ -161,10 +161,12 @@ export function reviewMove(ply: PlyInfo, before: PositionAnalysis, after: Positi
   if (serious || result.classification === 'inaccuracy') {
     // Material verified along the opponent's best reply line.
     const reply = afterBest.pv;
-    if (reply.length > 0 && materialSwingAlongLine(ply.fenAfter, reply, ply.color, 6).delta <= -2) flags.push('material_loss');
-    const bestGain = materialSwingAlongLine(ply.fenBefore, best.pv, ply.color, 6).delta;
-    const playedGain = materialSwingAlongLine(ply.fenBefore, [ply.uci, ...reply], ply.color, 7).delta;
-    if (bestGain >= 2 && bestGain > playedGain) flags.push('missed_tactic');
+    // Material is measured at a settled point of each engine line (never mid-exchange).
+    const lost = settledSwing(ply.fenAfter, reply, ply.color);
+    if (reply.length > 0 && lost.settled && lost.delta <= -2) flags.push('material_loss');
+    const bestGain = settledSwing(ply.fenBefore, best.pv, ply.color);
+    const playedGain = settledSwing(ply.fenBefore, [ply.uci, ...reply], ply.color).delta;
+    if (bestGain.settled && bestGain.delta >= 2 && bestGain.delta > playedGain) flags.push('missed_tactic');
   }
 
   const bestUci = best.pv[0];

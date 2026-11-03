@@ -13,6 +13,7 @@ import type {
   Settings,
   SkillEvent,
 } from '../types/domain';
+import { normalizeExercise } from '../services/exercises/sequence';
 
 export interface EvalCacheRow extends PositionAnalysis {
   key: string; // fenKey
@@ -20,7 +21,7 @@ export interface EvalCacheRow extends PositionAnalysis {
 }
 
 export const DB_NAME = 'chessquest';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * IndexedDB schema. Bump `SCHEMA_VERSION` and add a new `.version()` block
@@ -56,6 +57,17 @@ export class ChessQuestDB extends Dexie {
       openingAttempts: '++id, openingId, lineId, at',
       settings: 'id',
     });
+    // v2: exercises gain kind/goal/tree (sequence exercises). Legacy rows are converted.
+    this.version(2)
+      .stores({})
+      .upgrade((tx) =>
+        tx
+          .table('exercises')
+          .toCollection()
+          .modify((ex: Exercise) => {
+            if (!ex.tree) Object.assign(ex, normalizeExercise(ex));
+          }),
+      );
   }
 }
 

@@ -74,6 +74,31 @@ describe('move classification', () => {
     expect(slower.flags).toContain('mate_found');
   });
 
+  it('in a position already lost to forced mate, hastening the mate is not an error nor "excellent"', () => {
+    const r = classifyMove({ ...base, color: 'w', before: mate(-5), after: mate(-1) });
+    expect(r.classification).toBe('good');
+    expect(r.flags).toContain('defense_needed');
+    expect(classifyMove({ ...base, color: 'w', before: mate(-5), after: mate(-5), playedIsBest: true }).classification).toBe('best');
+  });
+
+  it('several equally good moves: an alternative with the same score is "best", a near-equal one "excellent"', () => {
+    expect(classifyMove({ ...base, color: 'w', before: cp(30), after: cp(30), playedIsBest: true }).classification).toBe('best');
+    expect(classifyMove({ ...base, color: 'w', before: cp(30), after: cp(22) }).classification).toBe('excellent');
+  });
+
+  it('never penalizes when the after-evaluation is better than the reference (search noise)', () => {
+    const r = classifyMove({ ...base, color: 'b', before: cp(-40), after: cp(-90) });
+    expect(r.winLoss).toBe(0);
+    expect(r.classification).toBe('excellent');
+  });
+
+  it('separates inaccuracy, mistake and blunder on the same scale for both colors', () => {
+    const w = [cp(-60), cp(-130), cp(-450)].map((after) => classifyMove({ ...base, color: 'w', before: cp(0), after }).classification);
+    const b = [cp(60), cp(130), cp(450)].map((after) => classifyMove({ ...base, color: 'b', before: cp(0), after }).classification);
+    expect(w).toEqual(['inaccuracy', 'mistake', 'blunder']);
+    expect(b).toEqual(w);
+  });
+
   it('flags lost winning positions, equality and inferior positions', () => {
     expect(classifyMove({ ...base, color: 'w', before: cp(600), after: cp(0) }).flags).toContain('lost_winning_position');
     const r = classifyMove({ ...base, color: 'w', before: cp(0), after: cp(-300) });

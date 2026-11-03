@@ -119,6 +119,10 @@ export function classifyMove(input: ClassifyInput): ClassifyResult {
   } else if (hadMate && keepsMate) {
     // Still mating, just slower: never worse than "good".
     classification = 'good';
+  } else if (hasMateFor(before, opponent) && hasMateFor(after, opponent)) {
+    // Already lost to a forced mate: the result cannot change, so no error label;
+    // but a move that is not the most resistant defense is not "excellent" either.
+    classification = 'good';
   } else {
     classification = classByLoss(winLoss, t);
   }

@@ -36,6 +36,14 @@ Regras de mate (precedem a tabela):
 - **Permitiu mate**: depois do lance o adversário tem mate forçado que não tinha antes → erro grave.
 - **Mate perdido**: havia mate forçado e ele desapareceu → imprecisão se a posição continua vencedora (≥ 80%), erro se ≥ 60%, senão erro grave.
 - **Mate mais lento**: continua havendo mate, só mais longo → no máximo "bom".
+- **Já perdido por mate forçado**: se o adversário já tinha mate forçado antes e continua tendo depois, o resultado não muda → "bom" (nunca "excelente" nem erro); o melhor lance de defesa continua "melhor lance".
+
+Outras salvaguardas:
+
+- Várias jogadas igualmente boas: um lance com a mesma pontuação do primeiro da busca é "melhor lance"; diferenças pequenas caem em "excelente/bom". A severidade nunca aumenta só porque o motor preferiu outro lance — conta apenas a perda de expectativa.
+- Ruído de busca: se a avaliação depois do lance for *melhor* que a de referência, a perda é 0.
+- Profundidade: o veredito usa a menor profundidade entre as buscas comparadas; abaixo do mínimo (padrão 10) ou com busca interrompida, o lance é "inconclusivo" e não gera exercício nem evidência.
+- Os marcadores "perda de material" e "oportunidade tática desperdiçada" medem o material num **ponto estável** da linha do motor (ver §4).
 
 Marcadores adicionais (não alteram a categoria): perda de posição vencedora, perda de vantagem, perda de igualdade, entrada em posição inferior (faixas: vencendo ≥ 80, vantagem ≥ 60, igual 40–60, pior 20–40, perdendo < 20), defesa necessária, erro de abertura (erro/erro grave até a meia-jogada 20), único lance (diferença ≥ 15 p.p. para a 2ª linha), perda de material (a linha de resposta do motor perde ≥ 2 pontos em até 6 meias-jogadas), oportunidade tática desperdiçada (a melhor linha ganhava ≥ 2 pontos).
 
@@ -43,32 +51,87 @@ Marcadores adicionais (não alteram a categoria): perda de posição vencedora, 
 
 "Perda média de expectativa" = média da perda (p.p.) por lance conclusivo; "perda média em centipawns" considera só lances em que antes e depois são centipawns (limitado a 1000). **Não é** a "precisão" de outras plataformas e não deve ser comparada a ela.
 
-## 4. Explicações
+## 4. Fatos táticos e explicações
 
-`services/pedagogy/concepts.ts` detecta conceitos usando apenas fatos verificáveis:
+### 4.1 Primitivas com legalidade (`services/chess/tactics.ts`)
 
-| Conceito | Verificação |
+Tudo é derivado da geração de lances **legais** do chess.js — uma peça cravada não "ataca" nem "defende" uma casa para a qual não pode se mover.
+
+| Primitiva | Definição |
 |---|---|
-| Peça desprotegida | Após o lance, uma peça sua é atacada e sem defensores (ou atacada por peça de menor valor) **e** o primeiro lance da resposta do motor a captura **e** a linha do motor perde ≥ 2 pontos |
-| Ameaça ignorada | Igual ao anterior, mas a peça já estava vulnerável antes do lance |
-| Defensor removido | Igual, e a peça movida defendia a casa antes do lance |
-| Ataque duplo | A melhor linha ganha ≥ 2 pontos e a peça que se move ataca ≥ 2 alvos de valor ≥ 3 (ou o rei) |
-| Captura desperdiçada / xeque decisivo | A melhor linha ganha ≥ 2 pontos começando com captura / xeque |
-| Mate perdido / permitido | Marcadores de mate da classificação |
-| Abertura / final / posicional | Fallback por fase, marcado como explicação **limitada** |
+| Captura legal | Lance legal que captura na casa. Para o lado que **não** está a jogar usa-se o "lance nulo" (o adversário passa a vez); o lance nulo é recusado se o lado a jogar está em xeque. |
+| SEE (troca estática) | Valor da captura menos o melhor resultado das recapturas legais na mesma casa, sempre com o atacante legal de menor valor, podendo parar a qualquer momento. Promoções contam o ganho da peça. |
+| Peça "en prise" | Peça que o adversário pode capturar legalmente com SEE > 0. |
+| Recapturadores legais | Peças que podem recapturar legalmente depois da captura mais barata do adversário. |
+| Cravada | Peça de longo alcance → uma peça → rei (absoluta) ou peça mais valiosa (relativa), na linha de movimento dessa peça. |
+| Mate em 1 / ameaça de mate | Lances legais que dão xeque-mate (exato); ameaça = mate em 1 do adversário no lance nulo. |
+| Ataque duplo | A peça que se move ataca ≥ 2 alvos valiosos (cavalo, bispo, torre, dama) ou dá xeque e ataca outro, por capturas legais (ou geometria, se o adversário estiver em xeque). |
+| Ataque descoberto | Depois do lance, outra peça (não cravada absolutamente) passa a atacar um alvo valioso ou o rei. |
+| Peça sobrecarregada | Única recapturadora legal de ≥ 2 peças que o adversário pode capturar. |
+| Desvio | Na linha do motor, a resposta do adversário move uma peça que era recapturadora legal da casa capturada no lance seguinte, reduzindo os defensores. |
 
-Os textos ficam em `services/pedagogy/explain.ts`, separados da interface, e só interpolam evidências calculadas. Quando nenhuma causa é verificada, a explicação mostra apenas a avaliação objetiva do motor e é sinalizada como "limitada". Os ataques são geométricos (cravadas não são consideradas); por isso nenhuma perda é afirmada sem a confirmação da linha do motor.
+### 4.2 Material em ponto estável
+
+`settledSwing` mede o material ao longo da linha do motor: joga 6 meias-jogadas e continua enquanto o último lance foi captura, promoção ou xeque (até 12). Se a linha terminar no meio de uma troca, o resultado é marcado **não estabilizado** e nenhuma quantidade de material é afirmada.
+
+### 4.3 Conceitos (`services/pedagogy/concepts.ts`)
+
+Ordem de detecção (o primeiro vira o tema principal):
+
+1. **Mate**: mate permitido / mate disponível (marcadores do motor + mate em 1 exato; indica se já havia ameaça de mate em 1 antes do lance).
+2. **Captura que perde material**: o lance jogado é captura com SEE < 0 **e** a linha do motor confirma perda ≥ 2 em ponto estável.
+3. **Material perdido para a resposta** (linha do adversário perde ≥ 2): motivo do adversário — ataque duplo, ataque descoberto, desvio, sobrecarga, cravada (a peça perdida está cravada e "en prise"), peça desprotegida (a peça movida ficou "en prise"), ameaça não respondida (já estava "en prise" antes), defensor removido (a peça movida era recapturadora legal).
+4. **Oportunidade perdida** (a melhor linha ganha ≥ 2 em ponto estável e mais que o lance jogado): motivo do jogador — ataque descoberto, ataque duplo, desvio, sobrecarga, cravada nova, captura com SEE ≥ 2, xeque, ou "combinação" (ganho confirmado sem padrão reconhecido).
+5. **Defesa**: mate forçado contra; defesa necessária.
+6. **Posicional** (sem evidência material): conversão (posição vencedora ≥ 80%), abertura, final ou posicional — sempre **limitado**.
+
+Um conceito é **verificado** apenas quando todos os fatos citados vêm de lances legais e de linhas do motor medidas em ponto estável. Caso contrário a interface mostra a explicação como limitada.
+
+### 4.4 Estrutura da explicação (`services/pedagogy/explain.ts`)
+
+1. O que aconteceu (lance, tipo de erro — tático, posicional ou de mate —, fato verificado e avaliação).
+2. Melhor alternativa encontrada.
+3. Por que ela é superior.
+4. Ameaça ou consequência (linha do motor).
+5. Conceito.
+6. Como reconhecer situações semelhantes.
+
+Os textos não atribuem causas psicológicas (desatenção, pressa etc.); um teste garante a ausência desses termos nos templates.
 
 ## 5. Exercícios
 
+### 5.1 Seleção
+
 Critérios mínimos (`checkCandidate`): análise completa, profundidade ≥ mínimo, lance classificado como erro/erro grave (ou imprecisão com mate perdido/tática desperdiçada), ≥ 2 lances legais, e o lance errado **não** pode estar dentro da tolerância (senão a posição é descartada como ambígua). No máximo *N* por partida (padrão 4), priorizando a maior perda; posições repetidas são ignoradas.
 
-- **Lances aceitos**: todas as linhas do MultiPV cuja expectativa fica a até `tolerância` (padrão 5 p.p.) da melhor. Se houver mais de uma, o exercício é marcado como "várias soluções".
-- **Lance fora da lista**: o motor analisa a posição resultante na hora; o lance é aceito se a perda ficar dentro da tolerância e a busca terminar. Se o motor não puder verificar, nada é registrado.
-- **Sequências**: mates em até 3 e temas táticos guardam a linha forçada (até 3 lances do usuário). Cada lance seguinte precisa seguir a linha (ou dar mate); as respostas do adversário são jogadas automaticamente.
-- **Dificuldade (1–5)**: base 2; +1 se o primeiro lance é tranquilo (sem captura/xeque); +1 se exige ≥ 3 lances; +0,5 se exige 2 lances (exceto capturas); −1 para captura simples; −0,5 se há várias soluções.
-- **Dicas progressivas**: 1) tema/objetivo; 2) casa da peça a mover; 3) o lance.
-- **Repetição de tentativa**: resolver de novo após errar na mesma sessão conta como ajuda (1 dica) no registro.
+### 5.2 Tipos e objetivos (`goalFor`)
+
+| Tipo | Quando | Lances do usuário |
+|---|---|---|
+| Mate | A melhor linha é mate forçado para quem joga | N do "mate em N" (máx. 4) |
+| Sequência | A melhor linha ganha ≥ 2 pontos em ponto estável | ⌈meias-jogadas até estabilizar / 2⌉, de 1 a 3 |
+| Defesa | Tema defensivo (mate permitido, peça desprotegida, ameaça, cravada…) | 1 |
+| Conversão | Sem ganho material, posição vencedora (≥ 80%) | 2 |
+| Lance único | Demais casos | 1 |
+
+### 5.3 Árvore de solução (`buildSolutionTree`)
+
+Construída com o motor ao criar o exercício: em cada posição do usuário, busca MultiPV (≥ 3) → **lances aceitos** = todos dentro da tolerância (padrão 5 p.p.) do melhor. Em metas de mate, só são aceitos lances que mantêm mate forçado **dentro dos lances restantes** (a expectativa de vitória não distingue mate em 2 de mate em 5). Na raiz, até 2 lances aceitos são expandidos; abaixo dela, o principal. Cada lance expandido recebe até 2 **respostas equivalentes do adversário** (dentro da tolerância, do ponto de vista dele), recursivamente até o limite de lances.
+
+### 5.4 Validação (`playSolverMove`)
+
+1. Lance ilegal → recusado sem registro.
+2. Xeque-mate dado pelo usuário → resolvido.
+3. Lance na lista de aceitos → aceito. Fora da lista → o motor analisa a posição resultante e aceita se a perda ficar dentro da tolerância (e, em metas de mate, se o mate continuar forçado dentro do limite). Lances que terminam a partida (afogamento, empate) são julgados pela pontuação terminal, sem motor.
+4. Sem motor disponível, um lance fora da lista **não** é julgado ("não verificável", nada é registrado).
+5. Aceito: se atingiu o limite de lances → resolvido. Senão, o adversário responde com uma das respostas da árvore (escolha aleatória entre as equivalentes, para variar o treino); se o lance era uma alternativa não expandida, o motor calcula a resposta e o próximo nó na hora. Sem motor nesse caso, o exercício termina como resolvido, com aviso de que a continuação não foi verificada.
+6. Limite rígido: 4 lances do usuário por exercício.
+
+O registro de tentativa distingue: resolvido sem ajuda, com dicas (cada dica conta; repetir depois de errar na mesma sessão conta como uma dica) e solução consultada.
+
+Dificuldade (1–5): base 2; +1 se o primeiro lance é tranquilo (sem captura/xeque); +1 se exige ≥ 3 lances; +0,5 se exige 2 lances (exceto capturas); −1 para captura simples; −0,5 se há várias soluções.
+
+Exercícios criados antes desta versão (esquema v1, linha única) são convertidos para a árvore na migração do banco para o esquema v2.
 
 ## 6. Repetição espaçada
 
@@ -88,15 +151,22 @@ Competências: visão tática, cálculo, identificação de ameaças, defesa, es
 
 | Fonte | Peso | Resultado |
 |---|---|---|
-| Exercício | 1 | 1 sem dica; 1 − 0,25·dicas (mín. 0,25) com dica; 0 se errou ou viu a solução. Exercícios com sequência ≥ 3 meias-jogadas também contam para "cálculo" (peso 0,5) |
+| Exercício | 1 (1/k na k-ésima tentativa do mesmo exercício) | 1 sem dica; 1 − 0,25·dicas (mín. 0,25) com dica; 0 se errou ou viu a solução. Exercícios com sequência ≥ 3 meias-jogadas também contam para "cálculo" (peso 0,5) |
 | Lance de partida (fase: abertura/meio-jogo/final) | 0,2 | 1 bom+, 0,5 imprecisão, 0 erro |
 | Erro de partida com conceito verificado | 0,5 | 0 na competência do conceito |
 | Oportunidade aproveitada (ganho ≥ 2 encontrado, mate encontrado, defesa necessária encontrada, peça ameaçada salva) | 0,5 | 1 |
 | Treino de abertura | 0,5 | 1 / 0 |
 
-**Estimativa**: Beta(1,1) + Σ peso·resultado (α) e Σ peso·(1−resultado) (β). Mostra-se a média e o intervalo de credibilidade de 90% (aproximação normal da Beta). Nenhum rating é inferido; nenhum dado inicial é exigido.
+**Estimativa**: Beta(1,1) + Σ peso_efetivo·resultado (α) e Σ peso_efetivo·(1−resultado) (β). Mostra-se a média e o intervalo de credibilidade de 90% (aproximação normal da Beta). Nenhum rating é inferido; nenhum dado inicial é exigido.
 
-**Confiança**: peso < 2 → poucas evidências; < 6 → evidências iniciais; última evidência há > 30 dias ou taxa recente (últimos 8 eventos) 20 p.p. abaixo da média → precisa revisar; peso ≥ 10, média ≥ 75% e limite inferior ≥ 60% → domínio provisório; senão desempenho consistente.
+**Peso efetivo** (`effectiveWeights`):
+
+- Decaimento por idade com meia-vida de 120 dias (o perfil acompanha o desempenho recente).
+- Tentativas repetidas do **mesmo exercício** valem 1/k (k = ordem da tentativa): resolver 15 vezes a mesma posição soma ≈ 3,3, não 15.
+- Uma partida contribui com no máximo peso 1 por competência (uma partida tem poucos exemplos de cada tema).
+- Evidência de partida só é registrada a partir de conceitos **verificados** (§4.3) e de ameaças "en prise" reais (lances legais + SEE).
+
+**Confiança**: menos de 2 de peso efetivo → poucas evidências; menos de 6 → evidências iniciais; última evidência há > 30 dias (com ≥ 6 de peso bruto) ou taxa recente (últimos 8 eventos) 20 p.p. abaixo da média → precisa revisar; peso ≥ 10, média ≥ 75%, limite inferior ≥ 60% **e** acertos independentes em ≥ 5 exercícios distintos → domínio provisório; senão desempenho consistente.
 
 **Tendência**: compara os últimos 8 eventos com os 8 anteriores (≥ 4); diferença > 10 p.p. → subindo/caindo.
 

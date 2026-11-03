@@ -47,6 +47,15 @@ export function judgeWithEngine(ex: Exercise, afterAnalysis: PositionAnalysis): 
   return { accepted: afterAnalysis.complete && winLoss <= ex.tolerance, winLoss };
 }
 
+/** Progressive hints for the current node of a sequence: 1 = objective, 2 = piece to move, 3 = the move. */
+export function hintForNode(objective: string, accepted: readonly { uci: string; san: string }[], level: number): { text: string; square?: string } {
+  const best = accepted[0];
+  if (!best || level <= 1) return { text: `Objetivo: ${objective}` };
+  const from = best.uci.slice(0, 2);
+  if (level === 2) return { text: `A peça a mover está em ${from}.`, square: from };
+  return { text: `O lance é ${best.san}.`, square: from };
+}
+
 /** Progressive hints: 1 = theme, 2 = piece to move, 3 = full move. */
 export function hintFor(ex: Exercise, level: number): { text: string; square?: string } {
   const from = ex.bestMove.uci.slice(0, 2);

@@ -165,7 +165,14 @@ export type Theme =
   | 'defense'
   | 'positional'
   | 'opening'
-  | 'endgame';
+  | 'endgame'
+  | 'pin'
+  | 'discovered_attack'
+  | 'overloaded'
+  | 'deflection'
+  | 'losing_capture'
+  | 'combination'
+  | 'conversion';
 
 export interface SrsState {
   box: number;
@@ -177,6 +184,39 @@ export interface AcceptableMove {
   uci: string;
   san: string;
   score: Score; // White POV
+}
+
+/**
+ * single: one move; sequence: a forcing line of several moves; mate: forced mate;
+ * conversion: keep a winning advantage over several moves; defense: hold the position.
+ */
+export type ExerciseKind = 'single' | 'sequence' | 'mate' | 'conversion' | 'defense';
+
+export interface ExerciseGoal {
+  kind: ExerciseKind;
+  /** Hard cap on user moves before the exercise ends (termination rule). */
+  maxUserMoves: number;
+  /** Win% (solver's POV) of the reference line; every user move must stay within `tolerance` of the node's best. */
+  targetWin: number;
+  mateIn?: number;
+}
+
+/** One opponent reply (engine-equivalent defenses can branch). `next` null = line ends here. */
+export interface ReplyBranch {
+  uci: string;
+  san: string;
+  score: Score; // White POV, after the reply
+  next: SolutionNode | null;
+}
+
+/** A position where the solver is to move. */
+export interface SolutionNode {
+  fen: string;
+  /** Moves within tolerance of the best, from a MultiPV search of this node. */
+  accepted: AcceptableMove[];
+  /** Opponent replies computed after each expanded user move (keyed by user UCI). Empty array = terminal. */
+  replies: Record<string, ReplyBranch[]>;
+  depth: number;
 }
 
 export interface Exercise {
@@ -201,6 +241,10 @@ export interface Exercise {
   createdAt: number;
   srs: SrsState;
   analysisDepth: number;
+  /** Added in schema v2; legacy exercises are normalized on read. */
+  kind?: ExerciseKind;
+  goal?: ExerciseGoal;
+  tree?: SolutionNode;
 }
 
 export interface Attempt {

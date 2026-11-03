@@ -1,14 +1,31 @@
 import { Chess, type Square } from 'chess.js';
-import type { MoveReview, Skill, Theme } from '../../types/domain';
-import { vulnerablePieces, defendedBy, attackedTargets } from '../chess/attacks';
-import { materialSwingAlongLine, gamePhase, PIECE_VALUE } from '../chess/material';
-import { applyUci, parseUci, uciLineToSan } from '../chess/position';
+import type { Color, MoveReview, Skill, Theme } from '../../types/domain';
+import { gamePhase, settledSwing } from '../chess/material';
+import { applyUci, parseUci, uciLineToSan, uciToSan } from '../chess/position';
+import {
+  attackedTargets,
+  deflectionIn,
+  discoveredAttacks,
+  enPrise,
+  legalRecapturers,
+  mateInOne,
+  mateThreats,
+  overloadedDefenders,
+  pinsAgainst,
+  seeCapture,
+} from '../chess/tactics';
 import { hasMateFor } from '../analysis/evaluation';
+
+export type ConceptCategory = 'mate' | 'tactical' | 'positional';
 
 /** A concept detected in a reviewed move, with the facts that justify it. */
 export interface Concept {
   theme: Theme;
-  /** Machine-checkable evidence used by the templates. */
+  category: ConceptCategory;
+  /** Whose tactic it is: the player's missed opportunity ("own") or the opponent's ("opponent"). */
+  side?: 'own' | 'opponent';
+  /** True when every claim is backed by legal-move facts and a settled engine line. */
+  verified: boolean;
   evidence: ConceptEvidence;
 }
 
@@ -19,9 +36,17 @@ export interface ConceptEvidence {
   replySan?: string[];
   bestSan?: string[];
   mateIn?: number;
+  /** Exact mate-in-one move (chess.js), when one exists. */
+  mateMoveSan?: string;
+  /** Opponent had a mate-in-one threat before the move (null-move check). */
+  mateThreatBefore?: boolean;
   materialDelta?: number;
+  see?: number;
   targets?: { square: Square; type: string }[];
   movedPiece?: string;
+  by?: Square;
+  defender?: Square;
+  pinKind?: 'absolute' | 'relative';
 }
 
 export const THEME_SKILL: Record<Theme, Skill> = {
@@ -38,105 +63,176 @@ export const THEME_SKILL: Record<Theme, Skill> = {
   positional: 'strategy',
   opening: 'openings',
   endgame: 'endgames',
+  pin: 'patterns',
+  discovered_attack: 'tactics',
+  overloaded: 'tactics',
+  deflection: 'calculation',
+  losing_capture: 'calculation',
+  combination: 'calculation',
+  conversion: 'strategy',
 };
 
 export const THEME_LABEL: Record<Theme, string> = {
   hanging_piece: 'Peça desprotegida',
-  ignored_threat: 'Ameaça ignorada',
+  ignored_threat: 'Ameaça não respondida',
   removed_defender: 'Defensor removido',
-  missed_capture: 'Captura desperdiçada',
+  missed_capture: 'Captura vantajosa',
   fork: 'Ataque duplo',
   missed_check: 'Xeque decisivo',
   mate_threat: 'Ameaça de mate',
-  missed_mate: 'Mate perdido',
+  missed_mate: 'Mate disponível',
   allowed_mate: 'Mate permitido',
   defense: 'Defesa necessária',
   positional: 'Jogo posicional',
   opening: 'Princípios de abertura',
   endgame: 'Técnica de finais',
+  pin: 'Cravada',
+  discovered_attack: 'Ataque descoberto',
+  overloaded: 'Peça sobrecarregada',
+  deflection: 'Desvio',
+  losing_capture: 'Captura que perde material',
+  combination: 'Combinação tática',
+  conversion: 'Conversão de vantagem',
 };
+
+/** Material gain needed (points) before a line counts as tactical. */
+export const MATERIAL_THRESHOLD = 2;
 
 function mateDistance(score: { kind: string; value: number }): number | undefined {
   return score.kind === 'mate' ? Math.max(1, Math.ceil(Math.abs(score.value))) : undefined;
 }
 
+function isValuable(t: string): boolean {
+  return t === 'k' || t === 'q' || t === 'r' || t === 'b' || t === 'n';
+}
+
+/** Tactical motif carried by the first move of `line` (played from `fen`), for the side that plays it. */
+function motifOf(fen: string, line: readonly string[]): Omit<Concept, 'side' | 'verified' | 'category'> | null {
+  const first = line[0];
+  if (!first) return null;
+  const after = applyUci(fen, first);
+  if (!after) return null;
+  const { to } = parseUci(first);
+  const mover = fen.split(' ')[1] as Color;
+  const enemy: Color = mover === 'w' ? 'b' : 'w';
+  const san = uciLineToSan(fen, line.slice(0, 6));
+
+  const disc = discoveredAttacks(fen, first);
+  if (disc.length > 0) return { theme: 'discovered_attack', evidence: { bestSan: san, by: disc[0]?.by as Square, targets: disc.map((d) => ({ square: d.target, type: d.type })) } };
+
+  const targets = attackedTargets(after, to).filter((t) => isValuable(t.type));
+  if (targets.length >= 2) return { theme: 'fork', evidence: { bestSan: san, square: to, targets } };
+
+  const defl = deflectionIn(fen, line);
+  if (defl) return { theme: 'deflection', evidence: { bestSan: san, defender: defl.defender, square: defl.target } };
+
+  const overloaded = overloadedDefenders(fen, enemy).find((o) => line.slice(0, 3).some((u) => o.targets.includes(parseUci(u).to)));
+  if (overloaded) return { theme: 'overloaded', evidence: { bestSan: san, defender: overloaded.defender, pieceType: overloaded.defenderType, targets: overloaded.targets.map((s) => ({ square: s, type: new Chess(fen).get(s)?.type ?? '' })) } };
+
+  const before = new Set(pinsAgainst(fen, enemy).map((p) => `${p.pinned}${p.to}`));
+  const newPin = pinsAgainst(after, enemy).find((p) => p.by === to && !before.has(`${p.pinned}${p.to}`));
+  if (newPin) return { theme: 'pin', evidence: { bestSan: san, square: newPin.pinned, pieceType: newPin.pinnedType, by: newPin.by, pinKind: newPin.kind } };
+
+  const victim = new Chess(fen).get(to);
+  if (victim && victim.color === enemy) {
+    const see = seeCapture(fen, first) ?? 0;
+    if (see >= MATERIAL_THRESHOLD) return { theme: 'missed_capture', evidence: { bestSan: san, square: to, pieceType: victim.type, see } };
+  }
+  if (new Chess(after).inCheck()) return { theme: 'missed_check', evidence: { bestSan: san } };
+  return { theme: 'combination', evidence: { bestSan: san } };
+}
+
 /**
- * Detects concepts behind a move, using only verifiable facts: board geometry
- * from chess.js and the engine's own lines. Returns an ordered list (most
- * specific first). An empty list means no reliable explanation beyond the
- * raw engine evaluation is available.
+ * Detects concepts behind a move using only verifiable facts: legal-move
+ * analysis from chess.js and the engine's own lines (material is measured at
+ * a settled point of the line). Ordered most specific first. Phase-based
+ * fallbacks are marked unverified so the UI can present them as limited.
  */
 export function detectConcepts(review: MoveReview, replyLine: readonly string[]): Concept[] {
   const out: Concept[] = [];
   const mover = review.color;
-  const opponent = mover === 'w' ? 'b' : 'w';
+  const opponent: Color = mover === 'w' ? 'b' : 'w';
   const replySan = uciLineToSan(review.fenAfter, replyLine.slice(0, 6));
   const bestSan = uciLineToSan(review.fenBefore, review.bestLine.slice(0, 6));
 
+  // 1. Mates (engine flags + exact mate-in-one facts).
   if (review.flags.includes('allowed_mate')) {
+    const m1 = mateInOne(review.fenAfter)[0];
     const n = mateDistance(review.evalAfter);
-    out.push({ theme: 'allowed_mate', evidence: { replySan, ...(n ? { mateIn: n } : {}) } });
+    out.push({
+      theme: 'allowed_mate',
+      category: 'mate',
+      side: 'opponent',
+      verified: true,
+      evidence: { replySan, ...(n ? { mateIn: n } : {}), ...(m1 ? { mateMoveSan: uciToSan(review.fenAfter, m1) ?? m1 } : {}), mateThreatBefore: mateThreats(review.fenBefore).length > 0 },
+    });
   }
   if (review.flags.includes('mate_missed')) {
+    const m1 = mateInOne(review.fenBefore)[0];
     const n = mateDistance(review.evalBefore);
-    out.push({ theme: 'missed_mate', evidence: { bestSan, ...(n ? { mateIn: n } : {}) } });
+    out.push({ theme: 'missed_mate', category: 'mate', side: 'own', verified: true, evidence: { bestSan, ...(n ? { mateIn: n } : {}), ...(m1 ? { mateMoveSan: uciToSan(review.fenBefore, m1) ?? m1 } : {}) } });
   }
 
-  // Material lost to the opponent's best reply: find which piece and why.
+  const reply = settledSwing(review.fenAfter, replyLine, mover);
+  const best = settledSwing(review.fenBefore, review.bestLine, mover);
+
+  // 2. The played move was itself a capture that loses material (SEE + engine line agree).
+  const see = seeCapture(review.fenBefore, review.uci);
+  const isCapture = !!new Chess(review.fenBefore).get(parseUci(review.uci).to);
+  if (isCapture && see !== null && see < 0 && reply.settled && reply.delta <= -MATERIAL_THRESHOLD) {
+    out.push({ theme: 'losing_capture', category: 'tactical', side: 'opponent', verified: true, evidence: { see, replySan, materialDelta: reply.delta, square: parseUci(review.uci).to } });
+  }
+
+  // 3. Material lost to the opponent's best reply: which motif made it possible?
   const replyFirst = replyLine[0];
-  const replySwing = replyLine.length ? materialSwingAlongLine(review.fenAfter, replyLine, mover, 6).delta : 0;
-  if (replyFirst && replySwing <= -2) {
+  if (replyFirst && reply.delta <= -MATERIAL_THRESHOLD && !out.some((c) => c.theme === 'losing_capture')) {
     const target = parseUci(replyFirst).to;
-    const vulnAfter = vulnerablePieces(review.fenAfter, mover).find((v) => v.square === target);
-    if (vulnAfter) {
+    const base: ConceptEvidence = { replySan, capturingMoveSan: replySan[0] ?? replyFirst, materialDelta: reply.delta };
+    const theirMotif = motifOf(review.fenAfter, replyLine);
+    const ep = enPrise(review.fenAfter, mover).find((e) => e.square === target);
+    const pinnedTarget = pinsAgainst(review.fenAfter, mover).find((p) => p.pinned === target);
+    if (theirMotif && ['fork', 'discovered_attack', 'deflection', 'overloaded'].includes(theirMotif.theme)) {
+      out.push({ ...theirMotif, evidence: { ...theirMotif.evidence, ...base }, category: 'tactical', side: 'opponent', verified: reply.settled });
+    } else if (pinnedTarget && ep) {
+      out.push({ theme: 'pin', category: 'tactical', side: 'opponent', verified: reply.settled, evidence: { ...base, square: target, pieceType: pinnedTarget.pinnedType, by: pinnedTarget.by, pinKind: pinnedTarget.kind } });
+    } else if (ep) {
       const { from, to } = parseUci(review.uci);
-      const vulnBefore = vulnerablePieces(review.fenBefore, mover).some((v) => v.square === target);
-      const wasDefendedByMover = defendedBy(review.fenBefore, from).includes(target);
-      const evidence: ConceptEvidence = {
-        square: target,
-        pieceType: vulnAfter.type,
-        capturingMoveSan: replySan[0] ?? replyFirst,
-        replySan,
-        materialDelta: replySwing,
-      };
-      if (target === to) out.push({ theme: 'hanging_piece', evidence: { ...evidence, movedPiece: vulnAfter.type } });
-      else if (vulnBefore) out.push({ theme: 'ignored_threat', evidence });
-      else if (wasDefendedByMover) out.push({ theme: 'removed_defender', evidence });
-      else out.push({ theme: 'hanging_piece', evidence });
+      const evidence: ConceptEvidence = { ...base, square: target, pieceType: ep.type };
+      const wasEnPrise = enPrise(review.fenBefore, mover).some((e) => e.square === target);
+      if (target === to) out.push({ theme: 'hanging_piece', category: 'tactical', side: 'opponent', verified: reply.settled, evidence: { ...evidence, movedPiece: ep.type } });
+      else if (wasEnPrise) out.push({ theme: 'ignored_threat', category: 'tactical', side: 'opponent', verified: reply.settled, evidence });
+      else if (legalRecapturers(review.fenBefore, target, mover).includes(from)) out.push({ theme: 'removed_defender', category: 'tactical', side: 'opponent', verified: reply.settled, evidence: { ...evidence, defender: from } });
+      else out.push({ theme: 'hanging_piece', category: 'tactical', side: 'opponent', verified: reply.settled, evidence });
+    } else if (theirMotif) {
+      out.push({ ...theirMotif, evidence: { ...theirMotif.evidence, ...base }, category: 'tactical', side: 'opponent', verified: reply.settled && theirMotif.theme !== 'combination' });
     }
   }
 
-  // Opportunities the best move offered.
-  const bestFirst = review.bestLine[0];
-  if (bestFirst && review.bestMoveUci !== review.uci) {
-    const bestGain = materialSwingAlongLine(review.fenBefore, review.bestLine, mover, 6).delta;
-    const afterBest = applyUci(review.fenBefore, bestFirst);
-    if (afterBest && bestGain >= 2) {
-      const dest = parseUci(bestFirst).to;
-      const targets = attackedTargets(afterBest, dest).filter((t) => t.type === 'k' || PIECE_VALUE[t.type as keyof typeof PIECE_VALUE] >= 3);
-      const givesCheck = new Chess(afterBest).inCheck();
-      const isCapture = new Chess(review.fenBefore).get(dest)?.color === opponent;
-      if (targets.length >= 2) out.push({ theme: 'fork', evidence: { bestSan, materialDelta: bestGain, targets: targets.map((t) => ({ square: t.square, type: t.type })) } });
-      else if (isCapture) out.push({ theme: 'missed_capture', evidence: { bestSan, materialDelta: bestGain, square: dest } });
-      else if (givesCheck) out.push({ theme: 'missed_check', evidence: { bestSan, materialDelta: bestGain } });
+  // 4. Opportunity the best line offered that the played move did not take.
+  if (review.bestLine[0] && review.bestMoveUci !== review.uci && best.delta >= MATERIAL_THRESHOLD && !out.some((c) => c.category === 'mate')) {
+    const playedGain = settledSwing(review.fenBefore, [review.uci, ...replyLine], mover).delta;
+    if (best.delta > playedGain) {
+      const m = motifOf(review.fenBefore, review.bestLine);
+      if (m) out.push({ ...m, evidence: { ...m.evidence, materialDelta: best.delta }, category: 'tactical', side: 'own', verified: best.settled && m.theme !== 'combination' });
     }
   }
 
-  if (out.length === 0 && review.flags.includes('defense_needed') && hasMateFor(review.evalBefore, opponent)) {
-    out.push({ theme: 'mate_threat', evidence: { bestSan } });
+  // 5. Defensive situations.
+  if (out.length === 0 && hasMateFor(review.evalBefore, opponent)) {
+    out.push({ theme: 'mate_threat', category: 'mate', side: 'opponent', verified: true, evidence: { bestSan, mateThreatBefore: mateThreats(review.fenBefore).length > 0 } });
   }
-  if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', evidence: { bestSan } });
+  if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', category: 'positional', verified: false, evidence: { bestSan } });
 
+  // 6. No tactical evidence: positional/phase explanation, always limited.
   if (out.length === 0) {
     const phase = gamePhase(review.fenBefore, review.ply);
-    if (phase === 'opening') out.push({ theme: 'opening', evidence: { bestSan } });
-    else if (phase === 'endgame') out.push({ theme: 'endgame', evidence: { bestSan } });
-    else out.push({ theme: 'positional', evidence: { bestSan } });
+    const theme: Theme = review.winBefore >= 80 ? 'conversion' : phase === 'opening' ? 'opening' : phase === 'endgame' ? 'endgame' : 'positional';
+    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan } });
   }
   return out;
 }
 
-/** True when a concept is backed by concrete tactical evidence (not just phase heuristics). */
+/** True when a concept is backed by concrete, settled evidence (not phase heuristics). */
 export function isVerifiedConcept(c: Concept): boolean {
-  return !['positional', 'opening', 'endgame', 'defense'].includes(c.theme);
+  return c.verified;
 }

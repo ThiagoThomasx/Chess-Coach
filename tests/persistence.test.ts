@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
+import Dexie from 'dexie';
 import { ChessQuestDB, setDb } from '../src/db/database';
 import { importPgn, listGames, getGame, deleteGame, listImports, setUserColor } from '../src/db/gamesRepo';
 import { getAnalysis, saveAnalysis, recoverInterruptedAnalyses, dbEvalCache, toggleBookmark, listBookmarks } from '../src/db/analysisRepo';
@@ -157,5 +158,24 @@ describe('backup and restore', () => {
     await clearData('training');
     expect(await getExercise('ex1')).toBeUndefined();
     expect(await listGames()).toHaveLength(1);
+  });
+});
+
+describe('schema migration', () => {
+  it('upgrades a v1 database: legacy exercises gain a solution tree, data is kept', async () => {
+    const name = `migrate-${++n}`;
+    const v1 = new Dexie(name);
+    v1.version(1).stores({ exercises: 'id, gameId, theme, skill, difficulty, srs.dueAt, createdAt, source', games: 'id, &hash, importId, importedAt' });
+    const legacy = { ...exerciseFixture('g'), kind: undefined, goal: undefined, tree: undefined };
+    await v1.table('exercises').put(legacy);
+    v1.close();
+
+    const db = new ChessQuestDB(name);
+    setDb(db);
+    const ex = await getExercise('ex1');
+    expect(ex?.tree?.accepted[0]?.uci).toBe('a1a8');
+    expect(ex?.kind).toBe('mate');
+    expect(ex?.fen).toBe(legacy.fen);
+    expect(db.verno).toBe(2);
   });
 });

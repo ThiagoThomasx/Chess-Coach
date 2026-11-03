@@ -9,14 +9,14 @@ Sem login, sem backend, sem API de IA, sem analytics. Nenhum PGN, posição ou e
 - **Partidas** — importação de arquivos `.pgn` (seletor ou arrastar-e-soltar), várias partidas por arquivo, validação de arquivos vazios/inválidos/parcialmente legíveis, detecção de duplicatas, histórico de importações, metadados preservados (jogadores, resultado, data, evento, ritmo, Elo do PGN como metadado, ECO/abertura, FEN inicial).
 - **Análise** — Stockfish 19 (WASM) num Web Worker; análise rápida ou profunda, progresso, interrupção e retomada, cache de avaliações, barra e gráfico de avaliação, lista de lances em SAN, navegação por teclado, variantes exploráveis (arrastando peças ou clicando nas linhas do motor), análise sob demanda da posição exibida, marcação de posições para revisão, orientação do tabuleiro.
 - **Classificação** — melhor/excelente/bom/imprecisão/erro/erro grave/inconclusivo, com regras de mate separadas e marcadores (perdeu vantagem, permitiu mate, perda de material…). Limites configuráveis.
-- **Explicações** — o que aconteceu, problema, alternativa, por quê, consequência, conceito e como evitar — geradas por regras locais, sinalizando quando a explicação é limitada.
-- **Exercícios** — gerados automaticamente dos seus erros (com critérios de qualidade) ou manualmente; aceitam alternativas equivalentes, validam sequências forçadas, dicas progressivas, solução demonstrada, histórico de tentativas e repetição espaçada.
+- **Explicações** — o que aconteceu, melhor alternativa, por que é superior, ameaça/consequência, conceito e como reconhecer — com fatos táticos baseados em lances legais (SEE, cravadas, ataques descobertos, garfos, sobrecarga, desvio, mate em 1) e linhas do motor medidas em ponto estável; erros táticos e posicionais diferenciados; explicação "limitada" quando a causa não é verificável.
+- **Exercícios** — gerados dos seus erros (com critérios de qualidade) ou manualmente: lance único, sequência forçada, mate, conversão e defesa; árvore de solução calculada pelo motor com alternativas equivalentes e respostas diferentes do adversário; lances fora da árvore verificados pelo motor; dicas progressivas, solução demonstrada, histórico e repetição espaçada.
 - **Perfil adaptativo** — 8 competências estimadas por modelo Beta-Binomial com intervalo de credibilidade, níveis de confiança, tendência e dificuldade-alvo. Sem rating inicial.
 - **Aberturas** — biblioteca inicial de 8 aberturas (linhas principais e variantes com legalidade testada), objetivos, ideias, erros comuns, treino de continuação, repertório pessoal com revisão espaçada e linhas manuais.
 - **Dashboard e Evolução** — somente dados reais; "Seu próximo treino" rastreável aos lances que o justificam.
 - **Configurações** — profundidades, MultiPV, limites, tolerância, intervalos de revisão, tema, tabuleiro, backup/restauração validada, limpeza seletiva, uso de armazenamento.
 
-A metodologia completa (fórmulas e limites) está em [docs/METHODOLOGY.md](docs/METHODOLOGY.md); as decisões de arquitetura em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A metodologia completa (fórmulas e limites) está em [docs/METHODOLOGY.md](docs/METHODOLOGY.md); as decisões de arquitetura em [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); a auditoria de precisão em [docs/AUDIT-2026-11.md](docs/AUDIT-2026-11.md).
 
 ## Requisitos
 
@@ -82,9 +82,9 @@ scripts/          copy-engine.mjs (pós-instalação)
 ## Limitações conhecidas
 
 - Motor *lite* (rede neural menor): muito mais forte que humanos, mas mais fraco que o Stockfish completo; avaliações em profundidade baixa podem variar entre execuções.
-- Detecção de conceitos é geométrica (não considera cravadas); por isso só se afirma perda de material confirmada pela linha do motor, e o resto vira explicação "limitada".
+- A troca estática (SEE) considera só a casa da troca; por isso perdas de material só são afirmadas quando a linha do motor as confirma em ponto estável. Espetos, raio-X e interferências não são detectados.
 - Promoção no tabuleiro é sempre para dama.
-- Sequências de exercício: se o usuário escolher uma alternativa aceita no 1º lance, o exercício termina ali (não se calcula a continuação dessa alternativa).
+- Árvore de solução com ramificação limitada (2 alternativas na raiz, 2 respostas do adversário, até 4 lances); outras continuações exigem o motor ao vivo — sem ele, uma alternativa não expandida encerra o exercício como resolvido, com aviso.
 - A detecção de fase (abertura/meio-jogo/final) é heurística por material e número do lance.
 - Se o mesmo PGN for importado com cabeçalhos diferentes, não é considerado duplicata.
 - Partidas contra o computador não fazem parte deste MVP (a arquitetura do `UciEngine` permite adicioná-las).

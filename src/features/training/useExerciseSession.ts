@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Exercise, Settings } from '../../types/domain';
-import { applyUci, uciToSan } from '../../services/chess/position';
-import { hintFor, judgeWithEngine, MAX_HINTS, validateStep } from '../../services/exercises/validate';
+import { applyUci } from '../../services/chess/position';
+import { hintForNode, MAX_HINTS } from '../../services/exercises/validate';
+import { mainLine, normalizeExercise, playSolverMove, type SolveState } from '../../services/exercises/sequence';
 import { recordAttempt } from '../../db/trainingRepo';
 import { getEngine } from '../../services/engine/engineService';
 
@@ -16,12 +17,15 @@ const REPLY_DELAY_MS = 450;
 const DEMO_STEP_MS = 700;
 
 /**
- * Drives one solving session: validates moves, plays forced replies, offers
- * progressive hints, reveals/demonstrates the solution and persists the result.
+ * Drives one solving session over the exercise's solution tree: validates each
+ * move (stored lines or a fresh engine check), plays the opponent's reply,
+ * continues until a termination rule, and persists the result.
  */
-export function useExerciseSession(ex: Exercise, settings: Settings) {
+export function useExerciseSession(raw: Exercise, settings: Settings) {
+  const ex = useMemo(() => normalizeExercise(raw), [raw]);
+  const initial: SolveState = { node: ex.tree, userMoves: 0, fen: ex.fen };
+  const [solve, setSolve] = useState<SolveState>(initial);
   const [fen, setFen] = useState(ex.fen);
-  const [step, setStep] = useState(0);
   const [status, setStatus] = useState<SessionStatus>('playing');
   const [hints, setHints] = useState(0);
   const [hintSquare, setHintSquare] = useState<string | null>(null);
@@ -35,18 +39,16 @@ export function useExerciseSession(ex: Exercise, settings: Settings) {
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  const play = (from: string, uci: string): string => {
-    const next = applyUci(from, uci) ?? from;
-    setFen(next);
+  const show = (pos: string, uci: string) => {
+    setFen(pos);
     setLastMove({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
-    return next;
   };
 
   const finish = async (correct: boolean, revealed: boolean, played: string[]) => {
     // A retry after a failure in the same session counts as assistance.
     const updated = await recordAttempt(
-      ex,
-      { exerciseId: ex.id, at: Date.now(), correct, hintsUsed: hints + retries, revealed, timeMs: Date.now() - startedAt.current, moves: played },
+      raw,
+      { exerciseId: raw.id, at: Date.now(), correct, hintsUsed: hints + retries, revealed, timeMs: Date.now() - startedAt.current, moves: played },
       settings.srsIntervalsDays,
     );
     setNextDue(updated.srs.dueAt);
@@ -54,77 +56,77 @@ export function useExerciseSession(ex: Exercise, settings: Settings) {
 
   const onMove = (uci: string): boolean => {
     if (status !== 'playing') return false;
-    const verdict = validateStep(ex, step, fen, uci);
-    const played = [...moves, uci];
-    if (verdict.kind === 'incorrect') {
-      setStatus('failed');
-      setMoves(played);
-      setFeedback({ kind: 'bad', text: verdict.message });
-      void finish(false, false, played);
-      return false;
-    }
-    if (verdict.kind === 'unknown') {
-      void checkWithEngine(uci, played);
-      return true;
-    }
-    const after = play(fen, uci);
-    setMoves(played);
-    setFeedback({ kind: 'good', text: verdict.message });
-    if (verdict.kind === 'solved') {
-      setStatus('solved');
-      void finish(true, false, played);
-    } else {
-      setStep((s) => s + 1);
-      timers.current.push(setTimeout(() => play(after, verdict.opponentMove), REPLY_DELAY_MS));
-    }
-    return true;
-  };
-
-  const checkWithEngine = async (uci: string, played: string[]) => {
-    const san = uciToSan(fen, uci) ?? uci;
-    const after = play(fen, uci);
+    const after = applyUci(solve.fen, uci);
+    if (!after) return false;
+    const before = solve.fen;
+    show(after, uci);
     setStatus('checking');
-    setFeedback({ kind: 'info', text: `Verificando ${san} com o motor…` });
-    try {
-      const r = await getEngine().analyze({ fen: after, depth: Math.min(ex.analysisDepth, settings.analysisDepth), multiPv: 1 });
-      const j = judgeWithEngine(ex, r);
-      setMoves(played);
-      if (j.accepted) {
-        setStatus('solved');
-        setFeedback({ kind: 'good', text: `${san} também funciona: o motor avalia a posição dentro da tolerância (${j.winLoss.toFixed(1)} p.p. abaixo do melhor).` });
-        void finish(true, false, played);
-      } else {
-        setStatus('failed');
-        setFeedback({ kind: 'bad', text: `${san} não resolve: a expectativa cai ${Number.isFinite(j.winLoss) ? j.winLoss.toFixed(1) : '?'} p.p. em relação ao melhor lance.` });
-        void finish(false, false, played);
+    const played = [...moves, uci];
+    setMoves(played);
+    const inTree = solve.node.accepted.some((m) => m.uci === uci);
+    if (!inTree) setFeedback({ kind: 'info', text: 'Verificando o lance com o motor…' });
+    void playSolverMove(ex, solve, uci, { engine: getEngine(), depth: Math.min(ex.analysisDepth, settings.analysisDepth), tolerance: ex.tolerance }).then((v) => {
+      switch (v.kind) {
+        case 'illegal':
+        case 'unverifiable':
+          setFen(before);
+          setLastMove(null);
+          setMoves(moves);
+          setStatus('playing');
+          setFeedback({ kind: 'warn', text: v.message });
+          return;
+        case 'rejected':
+          setStatus('failed');
+          setFeedback({ kind: 'bad', text: v.message });
+          void finish(false, false, played);
+          return;
+        case 'solved':
+          setFen(v.fen);
+          setStatus('solved');
+          setFeedback({ kind: 'good', text: v.message });
+          void finish(true, false, played);
+          return;
+        case 'continue':
+          setFeedback({ kind: 'good', text: v.message });
+          setHintSquare(null);
+          timers.current.push(
+            setTimeout(() => {
+              show(v.state.fen, v.reply.uci);
+              setSolve(v.state);
+              setMoves([...played, v.reply.uci]);
+              setStatus('playing');
+            }, REPLY_DELAY_MS),
+          );
       }
-    } catch {
-      setFen(fen);
-      setStatus('playing');
-      setFeedback({ kind: 'warn', text: `${san} não está entre os lances analisados e o motor não pôde verificá-lo agora. Tente outro lance.` });
-    }
+    });
+    return true;
   };
 
   const hint = () => {
     if (status !== 'playing' || hints >= MAX_HINTS) return;
     const level = hints + 1;
-    const h = hintFor(ex, level);
+    const h = hintForNode(ex.objective, solve.node.accepted, level);
     setHints(level);
     setHintSquare(h.square ?? null);
     setFeedback({ kind: 'info', text: h.text });
   };
 
   const reveal = () => {
-    if (status === 'solved' || status === 'revealed') return;
+    if (status === 'solved' || status === 'revealed' || status === 'checking') return;
     const wasPlaying = status === 'playing';
+    const line = mainLine(ex.tree);
     setStatus('revealed');
-    setFeedback({ kind: 'warn', text: `Solução: ${ex.bestMove.san}. Demonstrando a sequência calculada…` });
+    setFeedback({ kind: 'warn', text: `Solução: ${ex.tree.accepted.map((m) => m.san).join(' ou ')}. Demonstrando a sequência calculada…` });
     let cur = ex.fen;
     setFen(cur);
-    ex.solutionLine.forEach((uci, i) => {
+    setLastMove(null);
+    line.forEach((uci, i) => {
       timers.current.push(
         setTimeout(() => {
-          cur = play(cur, uci);
+          const next = applyUci(cur, uci);
+          if (!next) return;
+          cur = next;
+          show(next, uci);
         }, DEMO_STEP_MS * (i + 1)),
       );
     });
@@ -135,8 +137,8 @@ export function useExerciseSession(ex: Exercise, settings: Settings) {
     timers.current.forEach(clearTimeout);
     setRetries((r) => (status === 'failed' || status === 'revealed' ? r + 1 : 0));
     setHints(0);
+    setSolve(initial);
     setFen(ex.fen);
-    setStep(0);
     setStatus('playing');
     setHintSquare(null);
     setFeedback(null);
@@ -146,5 +148,18 @@ export function useExerciseSession(ex: Exercise, settings: Settings) {
     startedAt.current = Date.now();
   };
 
-  return { fen, status, hints, hintSquare, feedback, lastMove, nextDue, onMove, hint, reveal, retry };
+  return {
+    fen,
+    status,
+    hints,
+    hintSquare,
+    feedback,
+    lastMove,
+    nextDue,
+    onMove,
+    hint,
+    reveal,
+    retry,
+    progress: { done: solve.userMoves, total: ex.goal.maxUserMoves, kind: ex.goal.kind },
+  };
 }

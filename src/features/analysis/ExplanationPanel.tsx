@@ -9,6 +9,8 @@ import { ClassBadge } from '../../components/feedback/ClassBadge';
 import { buildExercise, checkCandidate } from '../../services/exercises/generate';
 import { addExercise } from '../../db/trainingRepo';
 import { useToast } from '../../components/feedback/Toast';
+import { completeExercise } from '../../services/analysis/analysisRunner';
+import { getEngine } from '../../services/engine/engineService';
 
 type Props = {
   game: Game;
@@ -19,17 +21,17 @@ type Props = {
 };
 
 const SECTIONS: [keyof ReturnType<typeof explainMove>, string][] = [
-  ['problem', 'Qual foi o problema'],
-  ['betterAlternative', 'Alternativa melhor'],
-  ['why', 'Por que era melhor'],
-  ['consequence', 'Consequência'],
+  ['betterAlternative', 'Melhor alternativa encontrada'],
+  ['why', 'Por que ela é superior'],
+  ['consequence', 'Ameaça ou consequência'],
   ['concept', 'Conceito'],
-  ['howToAvoid', 'Como evitar'],
+  ['recognize', 'Como reconhecer situações semelhantes'],
 ];
 
 export function ExplanationPanel({ game, review, before, after, settings }: Props) {
   const toast = useToast();
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   if (!review) {
     return (
       <section className="panel">
@@ -53,7 +55,10 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
       toast('Posição ambígua: o lance jogado está dentro da tolerância de alternativas aceitas.', 'warn');
       return;
     }
-    const r = await addExercise(ex);
+    setIsCreating(true);
+    const full = await completeExercise(ex, settings, getEngine());
+    const r = await addExercise(full);
+    setIsCreating(false);
     setCreatedId(r.id);
     toast(r.added ? 'Exercício criado' : 'Já existe um exercício para esta posição', r.added ? 'good' : 'info');
   };
@@ -92,7 +97,9 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
       <div className="row xs faint">
         {e.confidence === 'verified' ? <CheckCircle2 size={14} /> : <Info size={14} />}
         <span>
-          {e.confidence === 'verified' ? 'Explicação baseada em fatos verificados no tabuleiro e na linha do motor.' : 'Explicação limitada: apenas a avaliação objetiva do motor está disponível.'}
+          {e.confidence === 'verified'
+            ? 'Explicação baseada em lances legais verificados e na linha do motor medida em posição estável.'
+            : 'Explicação limitada: a causa não pôde ser verificada com segurança; vale a avaliação objetiva do motor.'}
         </span>
       </div>
       <div className="row xs faint" style={{ marginTop: '0.3rem' }}>
@@ -103,8 +110,8 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
       </div>
       {(review.classification === 'inaccuracy' || review.classification === 'mistake' || review.classification === 'blunder') && (
         <div className="row" style={{ marginTop: '0.85rem' }}>
-          <button className="btn" disabled={!canCreate} onClick={() => void create()} data-testid="create-exercise">
-            <Dumbbell size={15} /> Criar exercício desta posição
+          <button className="btn" disabled={!canCreate || isCreating} onClick={() => void create()} data-testid="create-exercise">
+            <Dumbbell size={15} /> {isCreating ? 'Calculando a sequência…' : 'Criar exercício desta posição'}
           </button>
           {createdId && (
             <Link to={`/train/${createdId}`} className="small" data-testid="open-created-exercise">

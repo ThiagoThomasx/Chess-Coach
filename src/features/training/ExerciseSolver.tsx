@@ -14,6 +14,8 @@ import { Difficulty } from './Difficulty';
 import { useExerciseSession } from './useExerciseSession';
 import type { Exercise, Settings } from '../../types/domain';
 
+const KIND_LABEL = { single: 'Lance único', sequence: 'Sequência forçada', mate: 'Mate', conversion: 'Conversão', defense: 'Defesa' } as const;
+
 export function ExerciseSolver() {
   const { exerciseId = '' } = useParams();
   const settings = useSettings();
@@ -62,9 +64,9 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
         <div className="stack">
           <section className="panel" aria-live="polite">
             <div className="panel-head">
-              <h2>Sua vez</h2>
-              <span className="xs faint">
-                Dicas usadas: {s.hints}/{MAX_HINTS}
+              <h2>{s.status === 'checking' ? 'Verificando…' : 'Sua vez'}</h2>
+              <span className="xs faint" data-testid="sequence-progress">
+                {KIND_LABEL[s.progress.kind]} · lance {Math.min(s.progress.done + 1, s.progress.total)} de {s.progress.total} · dicas {s.hints}/{MAX_HINTS}
               </span>
             </div>
             {s.feedback ? (
@@ -74,7 +76,7 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
             ) : (
               <p className="small muted">Encontre o melhor lance. Você pode pedir dicas progressivas; elas são registradas separadamente do acerto independente.</p>
             )}
-            {ex.ambiguous && <p className="xs faint" style={{ marginTop: '0.6rem' }}>Esta posição admite mais de uma solução dentro da tolerância de {ex.tolerance} p.p.; todas são aceitas.</p>}
+            {ex.ambiguous && <p className="xs faint" style={{ marginTop: '0.6rem' }}>Esta posição admite mais de uma solução dentro da tolerância de {ex.tolerance} p.p.; todas são aceitas, e lances fora da lista são verificados pelo motor.</p>}
             <div className="row" style={{ marginTop: '0.9rem' }}>
               <button className="btn" onClick={s.hint} disabled={s.status !== 'playing' || s.hints >= MAX_HINTS} data-testid="hint">
                 <Lightbulb size={15} /> Dica

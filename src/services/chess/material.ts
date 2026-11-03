@@ -76,6 +76,38 @@ export function materialSwingAlongLine(fen: string, line: readonly string[], col
   return { delta: materialBalance(chess.fen(), color) - start, plies };
 }
 
+export interface SettledSwing {
+  delta: number;
+  plies: number;
+  /** False when the line ends right after a capture or a check (exchange may be unfinished). */
+  settled: boolean;
+}
+
+/**
+ * Material change for `color` along an engine line, measured at a quiet
+ * point: plays `basePlies` moves, then keeps going while the last move was a
+ * capture or gave check (up to `maxPlies`), so a pending recapture is never
+ * cut off. `settled` tells whether such a quiet point was reached.
+ */
+export function settledSwing(fen: string, line: readonly string[], color: Color, basePlies = 6, maxPlies = 12): SettledSwing {
+  const chess = new Chess(fen);
+  const start = materialBalance(fen, color);
+  let plies = 0;
+  let lastNoisy = false;
+  for (const uci of line) {
+    if (plies >= maxPlies || (plies >= basePlies && !lastNoisy)) break;
+    let m;
+    try {
+      m = chess.move(parseUci(uci));
+    } catch {
+      break;
+    }
+    plies++;
+    lastNoisy = m.isCapture() || m.isEnPassant() || m.isPromotion() || chess.inCheck();
+  }
+  return { delta: materialBalance(chess.fen(), color) - start, plies, settled: !lastNoisy || chess.isGameOver() };
+}
+
 export function pieceAt(fen: string, square: Square): { type: PieceSymbol; color: Color } | null {
   const p = new Chess(fen).get(square);
   return p ? { type: p.type, color: p.color } : null;

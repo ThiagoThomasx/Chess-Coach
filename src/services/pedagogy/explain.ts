@@ -2,125 +2,200 @@ import type { MoveReview, Skill, Theme } from '../../types/domain';
 import { CLASS_LABEL } from '../analysis/classify';
 import { formatScore } from '../analysis/evaluation';
 import { PIECE_NAME_PT } from '../chess/material';
-import { detectConcepts, isVerifiedConcept, THEME_LABEL, THEME_SKILL, type Concept } from './concepts';
+import { detectConcepts, THEME_LABEL, THEME_SKILL, type Concept, type ConceptCategory } from './concepts';
 
+/**
+ * Structured explanation. Each field answers one pedagogical question:
+ * whatHappened (1), betterAlternative (2), why (3), consequence (4),
+ * concept (5), recognize (6). Fields are omitted when unsupported by evidence.
+ */
 export interface Explanation {
   title: string;
+  category: ConceptCategory | 'good' | 'inconclusive';
   whatHappened: string;
-  problem?: string;
   betterAlternative?: string;
   why?: string;
   consequence?: string;
   concept?: string;
-  howToAvoid?: string;
+  recognize?: string;
   theme?: Theme;
   skill?: Skill;
-  /** "verified": backed by board facts + engine lines; "limited": only the engine's objective evaluation. */
+  /** "verified": backed by legal-move facts and settled engine lines; "limited": engine evaluation only. */
   confidence: 'verified' | 'limited';
   concepts: Concept[];
 }
 
-const piece = (t?: string): string => (t ? PIECE_NAME_PT[t as keyof typeof PIECE_NAME_PT] ?? 'peça' : 'peça');
-const line = (sans?: string[], n = 4): string => (sans && sans.length ? sans.slice(0, n).join(' ') : '');
+const piece = (t?: string): string => (t ? (PIECE_NAME_PT[t as keyof typeof PIECE_NAME_PT] ?? 'peça') : 'peça');
+const line = (sans?: string[], n = 5): string => (sans && sans.length ? sans.slice(0, n).join(' ') : '');
+const pts = (d?: number): string => `${Math.abs(d ?? 0)} ponto(s) de material`;
+const list = (ts?: { square: string; type: string }[]): string => (ts ?? []).map((t) => `${t.type === 'k' ? 'o rei' : `${piece(t.type)}`} em ${t.square}`).join(' e ');
 
-type TemplateFn = (r: MoveReview, c: Concept) => Omit<Explanation, 'title' | 'whatHappened' | 'confidence' | 'concepts'>;
+type Body = Pick<Explanation, 'why' | 'consequence' | 'concept' | 'recognize'> & { fact?: string };
+type Template = (r: MoveReview, c: Concept) => Body;
 
-/** Templates per theme. Each one only states facts present in the evidence. */
-const TEMPLATES: Record<Theme, TemplateFn> = {
+/**
+ * Templates only interpolate evidence computed by detectConcepts. Material
+ * amounts are quoted only when the engine line was measured at a settled point.
+ * No template speculates about the player's state of mind.
+ */
+const TEMPLATES: Record<Theme, Template> = {
   allowed_mate: (_r, c) => ({
-    problem: `Este lance permitiu um mate forçado${c.evidence.mateIn ? ` em ${c.evidence.mateIn}` : ''}.`,
-    consequence: c.evidence.replySan?.length ? `Linha do motor: ${line(c.evidence.replySan, 6)}.` : undefined,
-    concept: 'Segurança do rei: antes de cada lance, verifique xeques, capturas e ameaças do adversário contra o seu rei.',
-    howToAvoid: 'Pergunte-se: "depois deste lance, quais xeques o adversário tem?" e calcule cada um.',
+    fact: `Depois deste lance, o adversário tem mate forçado${c.evidence.mateIn ? ` em ${c.evidence.mateIn}` : ''}${c.evidence.mateMoveSan ? ` — imediatamente com ${c.evidence.mateMoveSan}` : ''}.`,
+    consequence: c.evidence.replySan?.length ? `Linha do motor: ${line(c.evidence.replySan, 7)}.` : undefined,
+    concept: c.evidence.mateThreatBefore ? 'Ameaça de mate: o adversário já ameaçava mate em 1 antes do lance, e a ameaça continuou de pé.' : 'Segurança do rei: lances que abrem linhas ou retiram defensores podem permitir mate.',
+    recognize: 'Antes de cada lance, verifique quais xeques o adversário terá depois dele, começando pelos que atingem casas sem defesa ao redor do seu rei.',
   }),
   missed_mate: (_r, c) => ({
-    problem: `Havia um mate forçado${c.evidence.mateIn ? ` em ${c.evidence.mateIn}` : ''} e ele não foi executado.`,
-    why: c.evidence.bestSan?.length ? `A sequência encontrada pelo motor foi ${line(c.evidence.bestSan, 6)}.` : undefined,
-    concept: 'Padrões de mate: lances forçantes (xeques) devem ser examinados primeiro.',
-    howToAvoid: 'Quando o rei adversário estiver exposto, calcule todos os xeques antes de escolher um lance tranquilo.',
+    fact: `Havia mate forçado${c.evidence.mateIn ? ` em ${c.evidence.mateIn}` : ''} nesta posição.`,
+    why: c.evidence.mateMoveSan ? `${c.evidence.mateMoveSan} dava mate imediatamente.` : c.evidence.bestSan?.length ? `Sequência do motor: ${line(c.evidence.bestSan, 7)}.` : undefined,
+    concept: 'Lances forçantes: xeques e capturas restringem as respostas e são os primeiros a calcular.',
+    recognize: 'Quando o rei adversário tem poucas casas livres, examine todos os xeques disponíveis antes de qualquer lance tranquilo.',
   }),
-  hanging_piece: (r, c) => ({
-    problem:
+  losing_capture: (r, c) => ({
+    fact: `A captura ${r.san} perde material: depois das recapturas legais o saldo é ${c.evidence.see} ponto(s) para você.`,
+    consequence: `Linha do motor: ${line(c.evidence.replySan)} (perda de ${pts(c.evidence.materialDelta)}).`,
+    concept: 'Troca estática: conte atacantes e defensores da casa e compare o valor das peças envolvidas antes de capturar.',
+    recognize: 'Uma peça "de graça" defendida por um peão ou por várias peças costuma ser uma captura perdedora para uma peça mais valiosa.',
+  }),
+  hanging_piece: (_r, c) => ({
+    fact:
       c.evidence.movedPiece !== undefined
-        ? `O ${piece(c.evidence.pieceType)} foi para ${c.evidence.square}, onde está atacado e sem defesa suficiente.`
-        : `Depois do lance, seu ${piece(c.evidence.pieceType)} em ${c.evidence.square} ficou atacado e sem defesa suficiente.`,
-    consequence: `O adversário pode responder ${c.evidence.capturingMoveSan}; na linha do motor (${line(c.evidence.replySan)}) você perde cerca de ${Math.abs(c.evidence.materialDelta ?? 0)} ponto(s) de material.`,
-    concept: 'Peças desprotegidas: uma peça atacada precisa de defensores suficientes ou deve sair do ataque.',
-    howToAvoid: `Antes de jogar, confira se a casa de destino é atacada${r.san.includes('x') ? ' e se a recaptura é favorável' : ''}.`,
+        ? `O ${piece(c.evidence.pieceType)} foi para ${c.evidence.square}, onde o adversário pode capturá-lo legalmente com ganho de material.`
+        : `Depois do lance, seu ${piece(c.evidence.pieceType)} em ${c.evidence.square} pode ser capturado legalmente com ganho de material.`,
+    consequence: c.evidence.materialDelta !== undefined ? `O adversário responde ${c.evidence.capturingMoveSan}; na linha do motor (${line(c.evidence.replySan)}) você perde ${pts(c.evidence.materialDelta)}.` : undefined,
+    concept: 'Peças desprotegidas: uma peça só está segura se as recapturas legais compensam a captura.',
+    recognize: 'Ao escolher a casa de destino, conte quantas peças adversárias podem capturar ali e quantas suas podem recapturar — peças cravadas não contam como defensoras.',
   }),
   ignored_threat: (_r, c) => ({
-    problem: `Seu ${piece(c.evidence.pieceType)} em ${c.evidence.square} já estava atacado antes do lance, e a ameaça não foi resolvida.`,
+    fact: `Seu ${piece(c.evidence.pieceType)} em ${c.evidence.square} já podia ser capturado com ganho antes do lance, e o lance não mudou isso.`,
     consequence: `O adversário pode jogar ${c.evidence.capturingMoveSan}; linha do motor: ${line(c.evidence.replySan)}.`,
-    concept: 'Identificação de ameaças: a cada lance do adversário, pergunte "o que ele quer fazer agora?".',
-    howToAvoid: 'Antes de executar seu plano, liste as peças suas que estão atacadas e quantas vezes estão defendidas.',
+    concept: 'Identificação de ameaças: o lance anterior do adversário pode ter criado uma ameaça que exige resposta.',
+    recognize: 'Depois de cada lance do adversário, liste as capturas que ele passou a ter e quais delas ganham material.',
   }),
   removed_defender: (r, c) => ({
-    problem: `A peça movida (${r.san}) defendia seu ${piece(c.evidence.pieceType)} em ${c.evidence.square}. Sem ela, essa peça ficou vulnerável.`,
+    fact: `A peça movida (${r.san}) podia recapturar em ${c.evidence.square}. Sem ela, seu ${piece(c.evidence.pieceType)} ficou sem defesa suficiente.`,
     consequence: `O adversário pode jogar ${c.evidence.capturingMoveSan}; linha do motor: ${line(c.evidence.replySan)}.`,
-    concept: 'Peças com função defensiva: mover um defensor pode deixar outra peça desprotegida.',
-    howToAvoid: 'Antes de mover uma peça, verifique quais outras peças dependem da proteção dela.',
+    concept: 'Funções defensivas: uma peça pode estar protegendo outra; ao movê-la, essa proteção desaparece.',
+    recognize: 'Antes de mover uma peça, verifique quais casas ela protege e se alguma peça sua depende disso.',
+  }),
+  fork: (_r, c) =>
+    c.side === 'opponent'
+      ? {
+          fact: `O lance permitiu um ataque duplo: ${c.evidence.capturingMoveSan} ataca ${list(c.evidence.targets)}.`,
+          consequence: `Linha do motor: ${line(c.evidence.replySan)}${c.evidence.materialDelta !== undefined ? ` (perda de ${pts(c.evidence.materialDelta)})` : ''}.`,
+          concept: 'Ataque duplo: uma peça que ataca dois alvos ao mesmo tempo costuma ganhar um deles.',
+          recognize: 'Observe casas de onde um cavalo ou uma peça de longo alcance do adversário atingiria duas peças suas desprotegidas ou o seu rei.',
+        }
+      : {
+          why: `${c.evidence.bestSan?.[0]} atacava ${list(c.evidence.targets)} ao mesmo tempo; linha do motor: ${line(c.evidence.bestSan)}, ganhando ${pts(c.evidence.materialDelta)}.`,
+          concept: 'Ataque duplo: o adversário só consegue salvar um dos alvos.',
+          recognize: 'Procure casas de onde uma peça sua atinja duas peças adversárias valiosas, ou uma peça e o rei.',
+        },
+  discovered_attack: (_r, c) =>
+    c.side === 'opponent'
+      ? {
+          fact: `O lance permitiu um ataque descoberto: depois de ${c.evidence.capturingMoveSan}, a peça em ${c.evidence.by} passa a atacar ${list(c.evidence.targets)}.`,
+          consequence: `Linha do motor: ${line(c.evidence.replySan)}.`,
+          concept: 'Ataque descoberto: ao mover uma peça, outra que estava atrás dela passa a atacar.',
+          recognize: 'Repare em peças adversárias alinhadas com uma torre, bispo ou dama por trás, apontando para seu rei ou dama.',
+        }
+      : {
+          why: `${c.evidence.bestSan?.[0]} descobria o ataque da peça em ${c.evidence.by} contra ${list(c.evidence.targets)}; linha do motor: ${line(c.evidence.bestSan)}, ganhando ${pts(c.evidence.materialDelta)}.`,
+          concept: 'Ataque descoberto: duas ameaças ao mesmo tempo — a da peça que se move e a da peça revelada.',
+          recognize: 'Procure suas peças posicionadas na frente de uma peça de longo alcance que mira um alvo valioso.',
+        },
+  pin: (_r, c) =>
+    c.side === 'opponent'
+      ? {
+          fact: `Seu ${piece(c.evidence.pieceType)} em ${c.evidence.square} está cravado (${c.evidence.pinKind === 'absolute' ? 'contra o rei: não pode sair da linha' : 'contra uma peça mais valiosa'}) pela peça em ${c.evidence.by}, e o adversário pode ganhá-lo.`,
+          consequence: `Linha do motor: ${line(c.evidence.replySan)}.`,
+          concept: c.evidence.pinKind === 'absolute' ? 'Cravada absoluta: a peça cravada não pode se mover legalmente, nem para defender.' : 'Cravada relativa: mover a peça cravada expõe uma peça mais valiosa.',
+          recognize: 'Quando uma peça sua está entre uma peça de longo alcance adversária e seu rei ou dama, ela não deve ser contada como defensora.',
+        }
+      : {
+          why: `${c.evidence.bestSan?.[0]} cravava o ${piece(c.evidence.pieceType)} em ${c.evidence.square}; linha do motor: ${line(c.evidence.bestSan)}, ganhando ${pts(c.evidence.materialDelta)}.`,
+          concept: 'Cravada: atacar uma peça que não pode (ou não deve) sair da linha.',
+          recognize: 'Procure peças adversárias alinhadas com o rei ou a dama delas numa coluna, fileira ou diagonal.',
+        },
+  overloaded: (_r, c) => ({
+    ...(c.side === 'opponent'
+      ? { fact: `O adversário explora uma peça sua sobrecarregada em ${c.evidence.defender}, única defensora de ${list(c.evidence.targets)}.`, consequence: `Linha do motor: ${line(c.evidence.replySan)}.` }
+      : { why: `A ${piece(c.evidence.pieceType)} adversária em ${c.evidence.defender} era a única defensora de ${list(c.evidence.targets)}; linha do motor: ${line(c.evidence.bestSan)}, ganhando ${pts(c.evidence.materialDelta)}.` }),
+    concept: 'Peça sobrecarregada: um defensor não consegue cumprir duas funções ao mesmo tempo.',
+    recognize: 'Conte quantas peças dependem de um mesmo defensor; se forem duas atacadas, capture uma para desviá-lo.',
+  }),
+  deflection: (_r, c) => ({
+    ...(c.side === 'opponent'
+      ? { fact: `O adversário desvia sua peça de ${c.evidence.defender}, que defendia ${c.evidence.square}.`, consequence: `Linha do motor: ${line(c.evidence.replySan)}.` }
+      : { why: `A sequência ${line(c.evidence.bestSan)} desviava a peça adversária de ${c.evidence.defender}, que defendia ${c.evidence.square}, ganhando ${pts(c.evidence.materialDelta)}.` }),
+    concept: 'Desvio: forçar um defensor a abandonar a casa ou a peça que protege.',
+    recognize: 'Quando uma peça adversária defende algo importante, procure lances forçantes que a obriguem a se mover.',
   }),
   missed_capture: (_r, c) => ({
-    problem: `Havia uma captura vantajosa em ${c.evidence.square}.`,
-    why: `Na linha do motor (${line(c.evidence.bestSan)}) você ganha cerca de ${c.evidence.materialDelta} ponto(s) de material.`,
-    concept: 'Capturas disponíveis: sempre verifique se alguma peça adversária está desprotegida.',
-    howToAvoid: 'Faça uma varredura de "xeques, capturas e ameaças" antes de cada lance.',
-  }),
-  fork: (_r, c) => ({
-    problem: `Havia um ataque duplo disponível contra ${c.evidence.targets?.map((t) => `${piece(t.type)} em ${t.square}`).join(' e ')}.`,
-    why: `Linha do motor: ${line(c.evidence.bestSan)}, ganhando cerca de ${c.evidence.materialDelta} ponto(s) de material.`,
-    concept: 'Ataque duplo: uma peça que ataca dois alvos ao mesmo tempo costuma ganhar material, pois o adversário só pode salvar um.',
-    howToAvoid: 'Procure casas de onde uma peça sua ataque duas peças adversárias valiosas ou o rei.',
+    why: `${c.evidence.bestSan?.[0]} capturava o ${piece(c.evidence.pieceType)} em ${c.evidence.square} com saldo positivo depois das recapturas legais (${c.evidence.see ?? '?'}); linha do motor: ${line(c.evidence.bestSan)}.`,
+    concept: 'Captura vantajosa: uma captura é boa quando a troca estática termina a seu favor.',
+    recognize: 'Antes de cada lance, verifique se alguma peça adversária pode ser capturada sem recaptura suficiente.',
   }),
   missed_check: (_r, c) => ({
-    problem: 'Havia um xeque que levava a ganho de material.',
-    why: `Linha do motor: ${line(c.evidence.bestSan)}, ganhando cerca de ${c.evidence.materialDelta} ponto(s).`,
-    concept: 'Lances forçantes: xeques limitam as respostas do adversário e facilitam o cálculo.',
-    howToAvoid: 'Considere todos os xeques disponíveis, mesmo os que parecem não funcionar à primeira vista.',
+    why: `O xeque ${c.evidence.bestSan?.[0]} iniciava uma sequência que ganha ${pts(c.evidence.materialDelta)}: ${line(c.evidence.bestSan)}.`,
+    concept: 'Lances forçantes: um xeque reduz as respostas do adversário e facilita o cálculo.',
+    recognize: 'Considere todos os xeques disponíveis, mesmo os que parecem não funcionar à primeira vista.',
+  }),
+  combination: (_r, c) => ({
+    why: `A linha do motor ${line(c.evidence.bestSan, 7)} ganha ${pts(c.evidence.materialDelta)}, mas não se encaixa num padrão tático simples reconhecido pelo ChessQuest.`,
+    concept: 'Cálculo concreto: algumas sequências só se justificam pela análise lance a lance.',
+    recognize: 'Em posições com peças adversárias pouco defendidas, calcule capturas e xeques até uma posição calma.',
   }),
   mate_threat: (_r, c) => ({
-    problem: 'O adversário tinha mate forçado nesta posição; era preciso encontrar a melhor defesa possível.',
+    fact: 'O adversário já tinha mate forçado; nenhum lance evitava a perda, então o critério é resistir o máximo possível.',
     why: c.evidence.bestSan?.length ? `A defesa mais resistente segundo o motor começava com ${c.evidence.bestSan[0]}.` : undefined,
-    concept: 'Defesa: em posições críticas, priorize lances que neutralizem a ameaça principal.',
-    howToAvoid: 'Identifique as casas fracas ao redor do seu rei antes de iniciar ações em outra parte do tabuleiro.',
+    concept: 'Defesa em posições críticas: prolongar o mate dá chances práticas de erro ao adversário.',
+    recognize: 'Quando o rei está sob ataque direto, priorize lances que cubram as casas de mate.',
   }),
   defense: (_r, c) => ({
-    problem: 'A posição exigia um lance defensivo preciso.',
+    fact: 'A posição exigia um lance defensivo preciso.',
     why: c.evidence.bestSan?.length ? `O motor indicava ${c.evidence.bestSan[0]} como a defesa mais sólida.` : undefined,
-    concept: 'Defesa ativa: às vezes a melhor defesa é uma contra-ameaça.',
-    howToAvoid: 'Compare as ameaças dos dois lados antes de decidir entre defender e atacar.',
+    concept: 'Defesa: neutralizar a ameaça principal antes de executar o próprio plano.',
+    recognize: 'Compare as ameaças dos dois lados antes de decidir entre defender e atacar.',
   }),
   positional: (_r, c) => ({
-    problem: 'O motor não encontrou uma perda imediata de material; a diferença é de natureza posicional ou de cálculo mais longo.',
+    fact: 'Não há perda imediata de material nas linhas do motor: a diferença é posicional ou depende de cálculo mais longo do que a análise automática consegue explicar.',
     why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
     concept: 'Avaliação posicional: atividade das peças, estrutura de peões e segurança do rei.',
-    howToAvoid: 'Ao escolher entre lances tranquilos, compare qual deles melhora sua pior peça.',
+    recognize: 'Ao comparar lances tranquilos, observe qual deles melhora a peça menos ativa ou cria uma fraqueza no campo adversário.',
+  }),
+  conversion: (_r, c) => ({
+    fact: 'A posição era vencedora segundo o motor, e o lance reduziu a vantagem sem perda imediata de material.',
+    why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
+    concept: 'Conversão de vantagem: em posições ganhas, simplificar e eliminar o contrajogo costuma ser mais seguro que buscar mais material.',
+    recognize: 'Com vantagem decisiva, verifique quais contra-ataques o adversário ainda tem e neutralize-os primeiro.',
   }),
   opening: (_r, c) => ({
-    problem: 'Este lance de abertura piorou significativamente a posição segundo o motor.',
+    fact: 'Este lance de abertura piorou a posição segundo o motor, sem um motivo tático imediato.',
     why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
     concept: 'Princípios de abertura: desenvolvimento, controle do centro e segurança do rei.',
-    howToAvoid: 'Revise a linha na biblioteca de aberturas e pratique a sequência correta.',
+    recognize: 'Revise a linha na biblioteca de aberturas e compare com o plano típico da estrutura.',
   }),
   endgame: (_r, c) => ({
-    problem: 'Neste final, o lance escolhido perdeu parte significativa da avaliação.',
+    fact: 'Neste final, o lance escolhido perdeu parte significativa da avaliação.',
     why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
     concept: 'Técnica de finais: atividade do rei e peões passados costumam ser decisivos.',
-    howToAvoid: 'Em finais, calcule corridas de peões e considere ativar o rei.',
+    recognize: 'Em finais, calcule corridas de peões e considere centralizar o rei.',
   }),
 };
 
 /** Produces a structured explanation for a reviewed move. */
 export function explainMove(review: MoveReview, replyLine: readonly string[]): Explanation {
   const label = CLASS_LABEL[review.classification];
-  const whatHappened = `Você jogou ${review.san}. Avaliação: ${formatScore(review.evalBefore)} antes (com o melhor lance) → ${formatScore(review.evalAfter)} depois.`;
+  const evalText = `Avaliação: ${formatScore(review.evalBefore)} com o melhor lance → ${formatScore(review.evalAfter)} depois do lance jogado (profundidade ${review.depth}).`;
   if (review.classification === 'inconclusive') {
-    return { title: label, whatHappened, problem: review.reason ?? 'Dados insuficientes para uma classificação confiável.', confidence: 'limited', concepts: [] };
+    return { title: label, category: 'inconclusive', whatHappened: `Você jogou ${review.san}. ${review.reason ?? 'Dados insuficientes para uma classificação confiável.'}`, confidence: 'limited', concepts: [] };
   }
   if (review.classification === 'best' || review.classification === 'excellent' || review.classification === 'good') {
     return {
       title: label,
-      whatHappened,
+      category: 'good',
+      whatHappened: `Você jogou ${review.san}. ${evalText}`,
       ...(review.classification !== 'best' && review.bestMoveSan ? { betterAlternative: `O motor preferia ${review.bestMoveSan}, mas a diferença é pequena.` } : {}),
       confidence: 'verified',
       concepts: [],
@@ -128,17 +203,19 @@ export function explainMove(review: MoveReview, replyLine: readonly string[]): E
   }
   const concepts = detectConcepts(review, replyLine);
   const main = concepts[0];
-  const betterAlternative = review.bestMoveSan ? `Melhor era ${review.bestMoveSan}.` : undefined;
-  if (!main) return { title: label, whatHappened, ...(betterAlternative ? { betterAlternative } : {}), confidence: 'limited', concepts };
-  const body = TEMPLATES[main.theme](review, main);
+  const betterAlternative = review.bestMoveSan ? `${review.bestMoveSan}.` : undefined;
+  if (!main) return { title: label, category: 'positional', whatHappened: `Você jogou ${review.san}. ${evalText}`, ...(betterAlternative ? { betterAlternative } : {}), confidence: 'limited', concepts };
+  const { fact, ...body } = TEMPLATES[main.theme](review, main);
+  const kind = main.category === 'positional' ? 'Erro posicional' : main.category === 'mate' ? 'Questão de mate' : 'Erro tático';
   return {
     title: `${label} · ${THEME_LABEL[main.theme]}`,
-    whatHappened,
+    category: main.category,
+    whatHappened: `Você jogou ${review.san}. ${kind}: ${fact ?? (main.side === 'own' ? 'havia uma oportunidade tática que o lance não aproveitou.' : 'a melhor continuação do motor era diferente.')} ${evalText}`,
     ...(betterAlternative ? { betterAlternative } : {}),
     ...Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)),
     theme: main.theme,
     skill: THEME_SKILL[main.theme],
-    confidence: isVerifiedConcept(main) ? 'verified' : 'limited',
+    confidence: main.verified ? 'verified' : 'limited',
     concepts,
   };
 }

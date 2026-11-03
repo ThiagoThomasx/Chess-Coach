@@ -1,6 +1,6 @@
 import type { Attempt, ConfidenceLevel, Exercise, MoveReview, Skill, SkillEstimate, SkillEvent } from '../../types/domain';
-import { gamePhase, materialSwingAlongLine } from '../chess/material';
-import { vulnerablePieces } from '../chess/attacks';
+import { gamePhase, settledSwing } from '../chess/material';
+import { enPrise } from '../chess/tactics';
 import { detectConcepts, THEME_SKILL } from '../pedagogy/concepts';
 import { DAY_MS } from '../scheduling/srs';
 
@@ -69,21 +69,59 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
 
     if (o === 0) {
       const c = detectConcepts(r, replyLines[r.ply] ?? [])[0];
-      if (c && c.theme !== 'positional' && c.theme !== 'opening' && c.theme !== 'endgame') events.push(ev(THEME_SKILL[c.theme], 0, WEIGHTS.gameConcept));
+      if (c && c.verified) events.push(ev(THEME_SKILL[c.theme], 0, WEIGHTS.gameConcept));
       continue;
     }
     // Successes: only when the position offered a verifiable opportunity or threat.
     if (o === 1) {
-      const gain = materialSwingAlongLine(r.fenBefore, r.bestLine, r.color, 6).delta;
-      if (gain >= 2) events.push(ev('tactics', 1, WEIGHTS.gameOpportunity));
+      const best = settledSwing(r.fenBefore, r.bestLine, r.color);
+      if (best.settled && best.delta >= 2) events.push(ev('tactics', 1, WEIGHTS.gameOpportunity));
       if (r.flags.includes('mate_found')) events.push(ev('patterns', 1, WEIGHTS.gameOpportunity));
       if (r.flags.includes('defense_needed')) events.push(ev('defense', 1, WEIGHTS.gameOpportunity));
-      const threatened = vulnerablePieces(r.fenBefore, r.color).length > 0;
-      const stillThreatened = vulnerablePieces(r.fenAfter, r.color).length > 0;
+      // Legal-capture threats (SEE > 0) only; geometric attacks by pinned pieces do not count.
+      const threatened = enPrise(r.fenBefore, r.color).length > 0;
+      const stillThreatened = enPrise(r.fenAfter, r.color).length > 0;
       if (threatened && !stillThreatened) events.push(ev('threats', 1, WEIGHTS.gameOpportunity));
     }
   }
-  return events;
+  return capPerSkill(events, MAX_GAME_WEIGHT_PER_SKILL);
+}
+
+/** One game contains few examples of each theme: its total weight per skill is capped. */
+export const MAX_GAME_WEIGHT_PER_SKILL = 1;
+
+function capPerSkill(events: SkillEvent[], cap: number): SkillEvent[] {
+  const totals = new Map<Skill, number>();
+  for (const e of events) totals.set(e.skill, (totals.get(e.skill) ?? 0) + e.weight);
+  return events.map((e) => {
+    const total = totals.get(e.skill) ?? 0;
+    return total > cap ? { ...e, weight: (e.weight * cap) / total } : e;
+  });
+}
+
+/** Weights decay with age (half-life) so the estimate follows recent performance. */
+export const HALF_LIFE_DAYS = 120;
+/** Mastery needs independent successes on this many distinct exercises of the skill. */
+export const MASTERY_DISTINCT_EXERCISES = 5;
+
+/**
+ * Effective weight of each event: exponential age decay, and diminishing
+ * weight for repeated attempts at the same exercise (k-th attempt × 1/k), so
+ * memorizing one position cannot inflate a skill.
+ */
+export function effectiveWeights(events: readonly SkillEvent[], now: number): number[] {
+  const seen = new Map<string, number>();
+  return events.map((e) => {
+    const age = Math.max(0, now - e.at) / DAY_MS;
+    let w = e.weight * 0.5 ** (age / HALF_LIFE_DAYS);
+    const exId = e.ref.exerciseId;
+    if (e.source === 'exercise' && exId) {
+      const k = (seen.get(exId) ?? 0) + 1;
+      seen.set(exId, k);
+      w /= k;
+    }
+    return w;
+  });
 }
 
 const RECENT_WINDOW = 8;
@@ -129,9 +167,10 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   if (events.length === 0) {
     return { skill, level: null, interval: null, evidence: 0, events: 0, recentRate: null, independentRate: null, assistedRate: null, trend: 'unknown', confidence: 'insufficient', targetDifficulty: target };
   }
-  const evidence = events.reduce((s, e) => s + e.weight, 0);
-  const alpha = 1 + events.reduce((s, e) => s + e.weight * e.outcome, 0);
-  const beta = 1 + events.reduce((s, e) => s + e.weight * (1 - e.outcome), 0);
+  const weights = effectiveWeights(events, now);
+  const evidence = weights.reduce((s, w) => s + w, 0);
+  const alpha = 1 + events.reduce((s, e, i) => s + (weights[i] ?? 0) * e.outcome, 0);
+  const beta = 1 + events.reduce((s, e, i) => s + (weights[i] ?? 0) * (1 - e.outcome), 0);
   const mean = alpha / (alpha + beta);
   const sd = Math.sqrt((alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1)));
   const interval: [number, number] = [Math.max(0, mean - Z90 * sd), Math.min(1, mean + Z90 * sd)];
@@ -149,11 +188,15 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   const assisted = ex.filter((e) => !e.independent && e.outcome > 0);
   const lastAt = events[events.length - 1]?.at;
 
+  // Staleness is judged on raw (undecayed) evidence: old knowledge is "to review", not "unknown".
+  const rawEvidence = events.reduce((s, e) => s + e.weight, 0);
+  const stale = lastAt !== undefined && now - lastAt > STALE_DAYS * DAY_MS;
   let confidence: ConfidenceLevel;
-  if (evidence < 2) confidence = 'insufficient';
+  if (stale && rawEvidence >= 6) confidence = 'needs_review';
+  else if (evidence < 2) confidence = 'insufficient';
   else if (evidence < 6) confidence = 'initial';
   else if ((lastAt !== undefined && now - lastAt > STALE_DAYS * DAY_MS) || (recentRate !== null && recentRate < mean - 0.2)) confidence = 'needs_review';
-  else if (evidence >= 10 && mean >= 0.75 && interval[0] >= 0.6) confidence = 'provisional_mastery';
+  else if (evidence >= 10 && mean >= 0.75 && interval[0] >= 0.6 && distinctIndependent(ex) >= MASTERY_DISTINCT_EXERCISES) confidence = 'provisional_mastery';
   else confidence = 'consistent';
 
   return {
@@ -170,6 +213,10 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
     targetDifficulty: target,
     ...(lastAt !== undefined ? { lastAt } : {}),
   };
+}
+
+function distinctIndependent(ex: readonly SkillEvent[]): number {
+  return new Set(ex.filter((e) => e.independent && e.outcome === 1).map((e) => e.ref.exerciseId ?? '')).size;
 }
 
 export function estimateProfile(events: readonly SkillEvent[], now: number): SkillEstimate[] {

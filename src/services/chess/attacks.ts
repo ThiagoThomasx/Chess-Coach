@@ -31,9 +31,9 @@ export function piecesOf(fen: string, color: Color): PieceOnSquare[] {
 }
 
 /**
- * Pieces of `color` that are attacked and either undefended or attacked by a
- * cheaper piece. Geometric only (ignores pins); callers must confirm with the
- * engine line before claiming material is actually lost.
+ * @deprecated Geometric only: counts pinned attackers and pinned defenders.
+ * Kept to document the difference in tests; production code uses
+ * `enPrise` from ./tactics, which relies on legal moves and SEE.
  */
 export function vulnerablePieces(fen: string, color: Color): Vulnerability[] {
   const chess = new Chess(fen);

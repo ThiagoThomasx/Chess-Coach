@@ -4,7 +4,12 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, afterAll } from 'vitest';
 import { UciEngine, type EngineTransport } from '../src/services/engine/UciEngine';
-import { analyzeGame } from '../src/services/analysis/gameAnalyzer';
+import { analyzeGame, reviewMove } from '../src/services/analysis/gameAnalyzer';
+import { replayGame, uciToSan } from '../src/services/chess/position';
+import { detectConcepts } from '../src/services/pedagogy/concepts';
+import { DEFAULT_THRESHOLDS } from '../src/services/analysis/classify';
+import { buildSolutionTree, playSolverMove } from '../src/services/exercises/sequence';
+import type { Exercise, ExerciseGoal } from '../src/types/domain';
 import { parsePgnText } from '../src/services/pgn/parsePgn';
 import { SHORT_BLUNDER_GAME } from './fixtures';
 
@@ -61,4 +66,96 @@ describe('Stockfish WASM (real engine)', () => {
     expect(['mistake', 'blunder']).toContain(nd4?.classification);
     expect(nd4?.flags).toContain('material_loss');
   }, 120_000);
+
+  it('several near-equal first moves: playing the 2nd engine line is not labelled an error', async () => {
+    const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const before = await engine.analyze({ fen: start, depth: 12, multiPv: 3 });
+    const second = before.lines[1]?.pv[0];
+    expect(second).toBeDefined();
+    const played = replayGame([sanOf(start, second as string)], start)[0]!;
+    const after = await engine.analyze({ fen: played.fenAfter, depth: 12, multiPv: 1 });
+    const r = reviewMove(played, before, after);
+    expect(['best', 'excellent', 'good']).toContain(r?.classification);
+  }, 60_000);
+
+  it('a shallow search is reported as inconclusive, not as a verdict', async () => {
+    const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const played = replayGame(['a4'], start)[0]!;
+    const before = await engine.analyze({ fen: start, depth: 4, multiPv: 1 });
+    const after = await engine.analyze({ fen: played.fenAfter, depth: 4, multiPv: 1 });
+    const r = reviewMove(played, before, after, DEFAULT_THRESHOLDS);
+    expect(r?.depth).toBeLessThan(DEFAULT_THRESHOLDS.minDepth);
+    expect(r?.classification).toBe('inconclusive');
+  }, 60_000);
+
+  it("fool's mate: 2.g4?? allows mate in one, scored from Black's side", async () => {
+    const plies = replayGame(['f3', 'e5', 'g4']);
+    const g4 = plies[2]!;
+    const before = await engine.analyze({ fen: g4.fenBefore, depth: 12, multiPv: 2 });
+    const after = await engine.analyze({ fen: g4.fenAfter, depth: 12, multiPv: 1 });
+    expect(after.lines[0]?.score).toEqual({ kind: 'mate', value: -1 });
+    const r = reviewMove(g4, before, after)!;
+    expect(r.classification).toBe('blunder');
+    expect(r.flags).toContain('allowed_mate');
+    const c = detectConcepts(r, after.lines[0]?.pv ?? [])[0];
+    expect(c).toMatchObject({ theme: 'allowed_mate', evidence: { mateMoveSan: 'Qh4#' } });
+  }, 60_000);
+
+  it('a capture that looks free (Qxd5) is detected as losing material with the real reply line', async () => {
+    const fen = '4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1';
+    const qxd5 = replayGame(['Qxd5'], fen)[0]!;
+    const before = await engine.analyze({ fen, depth: 14, multiPv: 2 });
+    const after = await engine.analyze({ fen: qxd5.fenAfter, depth: 14, multiPv: 1 });
+    expect(after.lines[0]?.pv[0]).toBe('c6d5');
+    const r = reviewMove(qxd5, before, after)!;
+    expect(r.classification).toBe('blunder');
+    expect(detectConcepts(r, after.lines[0]?.pv ?? [])[0]).toMatchObject({ theme: 'losing_capture', verified: true });
+  }, 60_000);
 });
+
+describe('sequence exercises with the real engine', () => {
+  const ROOKS = '6k1/8/8/8/8/8/1R6/R5K1 w - - 0 1';
+  const goal: ExerciseGoal = { kind: 'mate', maxUserMoves: 2, targetWin: 100, mateIn: 2 };
+  const opts = { depth: 14, multiPv: 4, tolerance: 5 };
+
+  it('builds a tree with equivalent first moves and two opponent defenses', async () => {
+    const tree = await buildSolutionTree(engine, ROOKS, goal, opts);
+    const firsts = tree.accepted.map((m) => m.uci);
+    // Only moves that keep a forced mate within 2 moves are accepted.
+    expect(tree.accepted.every((m) => m.score.kind === 'mate' && m.score.value > 0 && m.score.value <= 2)).toBe(true);
+    expect(firsts.length).toBeGreaterThanOrEqual(2);
+    const expanded = Object.values(tree.replies).filter((b) => b.length > 0);
+    expect(expanded.length).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...expanded.map((b) => b.length))).toBe(2);
+  }, 120_000);
+
+  it('solves the line move by move whichever defense the engine picks', async () => {
+    const tree = await buildSolutionTree(engine, ROOKS, goal, opts);
+    const ex = { id: 'e', fen: ROOKS, sideToMove: 'w', tolerance: 5, goal, tree, kind: 'mate' } as unknown as Exercise & { goal: ExerciseGoal };
+    const first = tree.accepted[0]!.uci;
+    for (const pick of [0, 1]) {
+      const v1 = await playSolverMove(ex, { node: tree, userMoves: 0, fen: ROOKS }, first, { engine, depth: 12, tolerance: 5, choose: () => pick });
+      expect(v1.kind).toBe('continue');
+      if (v1.kind !== 'continue') return;
+      const mateMove = v1.state.node.accepted[0]!.uci;
+      const v2 = await playSolverMove(ex, v1.state, mateMove, { engine, depth: 12, tolerance: 5 });
+      expect(v2.kind).toBe('solved');
+    }
+  }, 120_000);
+
+  it('judges a move outside the stored lines with a fresh search', async () => {
+    const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const single: ExerciseGoal = { kind: 'single', maxUserMoves: 1, targetWin: 50 };
+    const tree = await buildSolutionTree(engine, startFen, single, { depth: 12, multiPv: 1, tolerance: 5 });
+    const ex = { id: 's', fen: startFen, sideToMove: 'w', tolerance: 5, goal: single, tree, kind: 'single' } as unknown as Exercise & { goal: ExerciseGoal };
+    const st = { node: tree, userMoves: 0, fen: startFen };
+    const alt = tree.accepted[0]!.uci === 'g1f3' ? 'd2d4' : 'g1f3';
+    expect((await playSolverMove(ex, st, alt, { engine, depth: 12, tolerance: 5 })).kind).toBe('solved');
+    const bad = await playSolverMove(ex, st, 'g2g4', { engine, depth: 12, tolerance: 5 });
+    expect(bad.kind).toBe('rejected');
+  }, 120_000);
+});
+
+function sanOf(fen: string, uci: string): string {
+  return uciToSan(fen, uci) as string;
+}

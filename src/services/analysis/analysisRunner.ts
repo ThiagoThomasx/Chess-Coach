@@ -1,8 +1,8 @@
-import type { Game, GameAnalysis, Settings } from '../../types/domain';
+import type { Exercise, Game, GameAnalysis, Settings } from '../../types/domain';
 import { analyzeGame, replyLinesOf, type EngineLike } from './gameAnalyzer';
 import { dbEvalCache, getAnalysis, replaceGameSkillEvents, saveAnalysis } from '../../db/analysisRepo';
 import { addExercise, listExercises } from '../../db/trainingRepo';
-import { buildExercise, selectExercisePositions } from '../exercises/generate';
+import { buildExercise, selectExercisePositions, withSolutionTree } from '../exercises/generate';
 import { eventsFromGame } from '../adaptation/skills';
 
 export { replyLinesOf };
@@ -59,7 +59,7 @@ export function startAnalysis(game: Game, settings: Settings, engine: EngineLike
       previous,
     );
     await saveAnalysis(result);
-    if (result.status === 'complete') await deriveFromAnalysis(game, result, settings);
+    if (result.status === 'complete') await deriveFromAnalysis(game, result, settings, engine);
     emit(result);
     return result;
   })().finally(() => runs.delete(game.id));
@@ -75,7 +75,22 @@ export function stopAnalysis(gameId: string, engine?: { stop(): void }): void {
 }
 
 /** Generates exercises and skill events from a completed analysis (idempotent). */
-export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: Settings): Promise<{ exercisesAdded: number }> {
+/** Search settings for building exercise solution trees (capped so generation stays fast). */
+export function treeOptions(settings: Settings) {
+  return { depth: Math.min(settings.analysisDepth, 16), multiPv: Math.max(settings.multiPv, 3), tolerance: settings.exerciseTolerance };
+}
+
+/** Adds the solution tree; on engine failure the exercise is kept as a single-move exercise. */
+export async function completeExercise(ex: Exercise, settings: Settings, engine?: EngineLike): Promise<Exercise> {
+  if (!engine) return ex;
+  try {
+    return await withSolutionTree(ex, engine, treeOptions(settings));
+  } catch {
+    return ex;
+  }
+}
+
+export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: Settings, engine?: EngineLike): Promise<{ exercisesAdded: number }> {
   const replies = replyLinesOf(a);
   if (game.userColor) await replaceGameSkillEvents(game.id, eventsFromGame(game.id, a.reviews, replies, game.userColor, a.updatedAt));
   if (!game.userColor) return { exercisesAdded: 0 };
@@ -86,7 +101,7 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     const before = a.positions[r.ply - 1];
     if (!before) continue;
     const ex = buildExercise({ game, review: r, before, replyLine: replies[r.ply] ?? [], tolerance: settings.exerciseTolerance });
-    if (ex && (await addExercise(ex)).added) added++;
+    if (ex && (await addExercise(await completeExercise(ex, settings, engine))).added) added++;
   }
   return { exercisesAdded: added };
 }
