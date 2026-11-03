@@ -1,6 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import type { Color, MoveReview, Skill, Theme } from '../../types/domain';
-import { gamePhase, settledSwing } from '../chess/material';
+import { gamePhase, settledSwing, type SettledSwing } from '../chess/material';
 import { applyUci, parseUci, uciLineToSan, uciToSan } from '../chess/position';
 import {
   attackedTargets,
@@ -53,6 +53,14 @@ export interface ConceptEvidence {
   lineSettled?: boolean;
   /** Plies of the reply line played before measuring material. */
   linePlies?: number;
+  /**
+   * Same-criterion comparison of the best line and the played line: material
+   * for the mover at a settled point of each. Present only when both lines
+   * settled and the best one keeps more material.
+   */
+  materialCompare?: { best: number; played: number };
+  /** Opponent's mate distance with the best defense vs after the played move. */
+  mateCompare?: { best: number; played: number };
 }
 
 export const THEME_SKILL: Record<Theme, Skill> = {
@@ -160,6 +168,17 @@ function motifOf(fen: string, line: readonly string[]): Omit<Concept, 'side' | '
 }
 
 /**
+ * Material of the best line vs the played line (played move + engine reply),
+ * both measured at a settled point. Only kept when it actually separates them.
+ */
+function materialCompare(review: MoveReview, replyLine: readonly string[], best: SettledSwing): Pick<ConceptEvidence, 'materialCompare'> {
+  if (!review.bestLine[0] || review.bestMoveUci === review.uci) return {};
+  const played = settledSwing(review.fenBefore, [review.uci, ...replyLine], review.color);
+  if (!best.settled || !played.settled || best.delta - played.delta < CITED_LOSS_THRESHOLD) return {};
+  return { materialCompare: { best: best.delta, played: played.delta } };
+}
+
+/**
  * Detects concepts behind a move using only verifiable facts: legal-move
  * analysis from chess.js and the engine's own lines (material is measured at
  * a settled point of the line). Ordered most specific first. Phase-based
@@ -238,16 +257,20 @@ export function detectConcepts(review: MoveReview, replyLine: readonly string[])
   }
 
   // 5. Defensive situations.
+  const compare = materialCompare(review, replyLine, best);
   if (out.length === 0 && hasMateFor(review.evalBefore, opponent)) {
-    out.push({ theme: 'mate_threat', category: 'mate', side: 'opponent', verified: true, evidence: { bestSan, mateThreatBefore: mateThreats(review.fenBefore).length > 0 } });
+    const mateBest = mateDistance(review.evalBefore);
+    const matePlayed = hasMateFor(review.evalAfter, opponent) ? mateDistance(review.evalAfter) : undefined;
+    const mateCompare = mateBest !== undefined && matePlayed !== undefined && matePlayed < mateBest ? { mateCompare: { best: mateBest, played: matePlayed } } : {};
+    out.push({ theme: 'mate_threat', category: 'mate', side: 'opponent', verified: true, evidence: { bestSan, mateThreatBefore: mateThreats(review.fenBefore).length > 0, ...mateCompare } });
   }
-  if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', category: 'positional', verified: false, evidence: { bestSan } });
+  if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', category: 'positional', verified: false, evidence: { bestSan, ...compare } });
 
   // 6. No tactical evidence: positional/phase explanation, always limited.
   if (out.length === 0) {
     const phase = gamePhase(review.fenBefore, review.ply);
     const theme: Theme = review.winBefore >= 80 ? 'conversion' : phase === 'opening' ? 'opening' : phase === 'endgame' ? 'endgame' : 'positional';
-    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan, lineSettled: reply.settled, linePlies: reply.plies } });
+    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan, lineSettled: reply.settled, linePlies: reply.plies, ...compare } });
   }
   // Facts first: a verified concept always outranks an unverified one (stable otherwise).
   return [...out.filter((c) => c.verified), ...out.filter((c) => !c.verified)];

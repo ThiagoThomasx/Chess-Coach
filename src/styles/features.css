@@ -6,6 +6,23 @@
   align-items: start;
 }
 
+/* Below this width the side column leaves the games table too narrow for its columns (audit M8). */
+@media (max-width: 1280px) {
+  .games-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.game-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.game-link:hover,
+.game-link:focus-visible {
+  text-decoration: underline;
+}
+
 .history {
   list-style: none;
   margin: 0;

@@ -184,8 +184,14 @@
     display: flex;
   }
 
+  /* Visually hidden, still the link's accessible name (audit M8). */
   .nav a span.label {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   .nav a.active::before {

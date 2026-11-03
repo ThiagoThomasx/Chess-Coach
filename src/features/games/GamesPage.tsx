@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Library, Trash2 } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { deleteGame, setUserColor } from '../../db/gamesRepo';
@@ -89,9 +89,10 @@ export function GamesPage() {
                     return (
                       <tr key={g.id} className="clickable" data-testid="game-row" onClick={() => navigate(`/analysis/${g.id}`)}>
                         <td>
-                          <div>
+                          {/* The row is clickable for the mouse; the link makes it reachable by keyboard and screen readers (audit M8). */}
+                          <Link to={`/analysis/${g.id}`} className="game-link" data-testid="game-link" onClick={(e) => e.stopPropagation()}>
                             {g.headers.white} <span className="faint">×</span> {g.headers.black}
-                          </div>
+                          </Link>
                           <div className="xs faint">
                             {[g.headers.event, g.headers.date, g.headers.timeControl].filter(Boolean).join(' · ') || 'Sem metadados'}
                             {(g.headers.whiteElo || g.headers.blackElo) && ` · Elo PGN ${g.headers.whiteElo ?? '?'}/${g.headers.blackElo ?? '?'}`}

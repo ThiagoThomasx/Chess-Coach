@@ -95,7 +95,7 @@ Um conceito é **verificado** apenas quando todos os fatos citados vêm de lance
 
 1. O que aconteceu (lance, tipo de erro — tático, posicional ou de mate —, fato verificado e avaliação).
 2. Melhor alternativa encontrada.
-3. Por que ela é superior.
+3. Por que ela é superior — sempre um fato que compara os dois lances pelo mesmo critério: o motivo tático da alternativa, o mate que ela força, a distância do mate adversário (com a alternativa × depois do lance jogado) ou o material de cada linha medido em ponto estável. Sem um desses fatos a seção é omitida; ela nunca apenas repete a linha do motor.
 4. Ameaça ou consequência (linha do motor).
 5. Conceito.
 6. Como reconhecer situações semelhantes.

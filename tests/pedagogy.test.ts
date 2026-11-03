@@ -211,3 +211,37 @@ describe('pin tense and gender (audit M2, B1)', () => {
     expect(e.whatHappened).toMatch(/o rei em e1 e a dama em h2/);
   });
 });
+
+// Sprint 3 audit, phase 7: "why it is better" states a fact or is omitted.
+const QUIET = '4k3/pp6/8/8/8/8/PP2Q3/4K3 w - - 0 1';
+
+describe('"why" compares both moves or is omitted (audit M7)', () => {
+  it('omits the section when no fact separates the moves, instead of repeating the engine line', () => {
+    const e = explainMove(review(QUIET, 'e2e3', 'Qe3', { ply: 40, bestLine: ['e2b5', 'e8d8'], bestMoveSan: 'Qb5+', bestMoveUci: 'e2b5' }), ['e8d7']);
+    expect(e.category).toBe('positional');
+    expect(e.why).toBeUndefined();
+    expect(e.betterAlternative).toContain('Qb5+');
+  });
+
+  it('compares settled material of the best line and the played line', () => {
+    // 1.Qb5+ Kd8 2.Qxb7 a6 wins a pawn; after Qe3 Kd7 material is level.
+    const r = review(QUIET, 'e2e3', 'Qe3', { ply: 40, bestLine: ['e2b5', 'e8d8', 'b5b7', 'a7a6'], bestMoveSan: 'Qb5+', bestMoveUci: 'e2b5' });
+    const c = detectConcepts(r, ['e8d7'])[0];
+    expect(c?.evidence.materialCompare).toEqual({ best: 1, played: 0 });
+    const e = explainMove(r, ['e8d7']);
+    expect(e.why).toMatch(/Com Qb5\+.*\+1.*Qe3.*0/);
+    expect(e.why).not.toMatch(/continuação preferida/);
+  });
+
+  it('a defense against mate is justified by the mate distance, not by naming the move', () => {
+    const r = review(QUIET, 'e2e3', 'Qe3', { ply: 40, evalBefore: { kind: 'mate', value: -5 }, evalAfter: { kind: 'mate', value: -2 }, bestLine: ['e2b5'], bestMoveSan: 'Qb5+', bestMoveUci: 'e2b5' });
+    const e = explainMove(r, ['e8d7']);
+    expect(e.theme).toBe('mate_threat');
+    expect(e.why).toBe('Com Qb5+, o mate demoraria 5 lance(s); depois de Qe3, vem em 2.');
+  });
+
+  it('no template uses the bare engine line as the justification', () => {
+    const source = readFileSync(new URL('../src/services/pedagogy/explain.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/continuação preferida pelo motor|defesa mais (sólida|resistente)|Sequência do motor:/);
+  });
+});

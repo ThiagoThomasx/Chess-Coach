@@ -43,11 +43,26 @@ const lossNote = (d?: number): string => (d !== undefined && d < 0 ? ` (perda de
  * denying tactics the detector cannot see, and states what the line measured.
  */
 function fallbackFact(c: Concept, situation: string): string {
-  const measured =
-    c.evidence.lineSettled === false
+  const measured = c.evidence.materialCompare
+    ? 'a diferença de material entre a linha do motor e a do lance jogado está descrita abaixo'
+    : c.evidence.lineSettled === false
       ? 'a linha de resposta do motor não chega a uma posição estável no trecho medido, por isso o material não foi verificado'
       : `nas linhas medidas (${c.evidence.linePlies ?? 0} meias-jogadas) o saldo de material não muda, e a diferença vem da avaliação do motor`;
   return `${situation} O ChessQuest não reconheceu um padrão tático simples neste lance; ${measured}.`;
+}
+
+const signedPts = (d: number): string => `${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d)}`;
+
+/**
+ * "Why the alternative is better", stated by the same criterion for both moves
+ * (material at a settled point). Undefined when no such fact separates them:
+ * the section is then omitted instead of repeating the engine line (audit M7).
+ */
+function compareWhy(r: MoveReview, c: Concept): string | undefined {
+  const m = c.evidence.materialCompare;
+  const first = c.evidence.bestSan?.[0];
+  if (!m || !first) return undefined;
+  return `Com ${first}, a linha do motor termina com saldo de material ${signedPts(m.best)} para você, medido em posição estável; depois de ${r.san} e da melhor resposta, o saldo fica em ${signedPts(m.played)}.`;
 }
 
 type Body = Pick<Explanation, 'why' | 'consequence' | 'concept' | 'recognize'> & { fact?: string };
@@ -67,7 +82,7 @@ const TEMPLATES: Record<Theme, Template> = {
   }),
   missed_mate: (_r, c) => ({
     fact: `Havia mate forçado${c.evidence.mateIn ? ` em ${c.evidence.mateIn}` : ''} nesta posição.`,
-    why: c.evidence.mateMoveSan ? `${c.evidence.mateMoveSan} dava mate imediatamente.` : c.evidence.bestSan?.length ? `Sequência do motor: ${line(c.evidence.bestSan, 7)}.` : undefined,
+    why: c.evidence.mateMoveSan ? `${c.evidence.mateMoveSan} dava mate imediatamente.` : c.evidence.bestSan?.length ? `A sequência ${line(c.evidence.bestSan, 7)} força o mate${c.evidence.mateIn ? ` em ${c.evidence.mateIn}` : ''}, qualquer que seja a defesa.` : undefined,
     concept: 'Lances forçantes: xeques e capturas restringem as respostas e são os primeiros a calcular.',
     recognize: 'Quando o rei adversário tem poucas casas livres, examine todos os xeques disponíveis antes de qualquer lance tranquilo.',
   }),
@@ -178,37 +193,40 @@ const TEMPLATES: Record<Theme, Template> = {
         },
   mate_threat: (_r, c) => ({
     fact: 'O adversário já tinha mate forçado; nenhum lance evitava a perda, então o critério é resistir o máximo possível.',
-    why: c.evidence.bestSan?.length ? `A defesa mais resistente segundo o motor começava com ${c.evidence.bestSan[0]}.` : undefined,
+    why:
+      c.evidence.mateCompare && c.evidence.bestSan?.length
+        ? `Com ${c.evidence.bestSan[0]}, o mate demoraria ${c.evidence.mateCompare.best} lance(s); depois de ${_r.san}, vem em ${c.evidence.mateCompare.played}.`
+        : undefined,
     concept: 'Defesa em posições críticas: prolongar o mate dá chances práticas de erro ao adversário.',
     recognize: 'Quando o rei está sob ataque direto, priorize lances que cubram as casas de mate.',
   }),
   defense: (_r, c) => ({
     fact: 'A posição exigia um lance defensivo preciso.',
-    why: c.evidence.bestSan?.length ? `O motor indicava ${c.evidence.bestSan[0]} como a defesa mais sólida.` : undefined,
+    why: compareWhy(_r, c),
     concept: 'Defesa: neutralizar a ameaça principal antes de executar o próprio plano.',
     recognize: 'Compare as ameaças dos dois lados antes de decidir entre defender e atacar.',
   }),
   positional: (_r, c) => ({
     fact: fallbackFact(c, 'O lance piorou a avaliação do motor.'),
-    why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
+    why: compareWhy(_r, c),
     concept: 'Avaliação posicional: atividade das peças, estrutura de peões e segurança do rei.',
     recognize: 'Ao comparar lances tranquilos, observe qual deles melhora a peça menos ativa ou cria uma fraqueza no campo adversário.',
   }),
   conversion: (_r, c) => ({
     fact: fallbackFact(c, 'A posição era vencedora segundo o motor, e o lance reduziu a vantagem.'),
-    why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
+    why: compareWhy(_r, c),
     concept: 'Conversão de vantagem: em posições ganhas, simplificar e eliminar o contrajogo costuma ser mais seguro que buscar mais material.',
     recognize: 'Com vantagem decisiva, verifique quais contra-ataques o adversário ainda tem e neutralize-os primeiro.',
   }),
   opening: (_r, c) => ({
     fact: fallbackFact(c, 'Este lance de abertura piorou a posição segundo o motor.'),
-    why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
+    why: compareWhy(_r, c),
     concept: 'Princípios de abertura: desenvolvimento, controle do centro e segurança do rei.',
     recognize: 'Revise a linha na biblioteca de aberturas e compare com o plano típico da estrutura.',
   }),
   endgame: (_r, c) => ({
     fact: fallbackFact(c, 'Neste final, o lance escolhido perdeu parte significativa da avaliação.'),
-    why: c.evidence.bestSan?.length ? `A continuação preferida pelo motor foi ${line(c.evidence.bestSan)}.` : undefined,
+    why: compareWhy(_r, c),
     concept: 'Técnica de finais: atividade do rei e peões passados costumam ser decisivos.',
     recognize: 'Em finais, calcule corridas de peões e considere centralizar o rei.',
   }),
