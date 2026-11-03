@@ -50,7 +50,7 @@ for (const width of [1100, 1300]) {
 }
 
 // Sprint 3: the main pages fit every common width without horizontal page scroll.
-for (const width of [320, 375, 768, 1024, 1440]) {
+for (const width of [320, 360, 375, 390, 430, 768, 1024, 1440]) {
   test(`dashboard, training and progress have no horizontal page scroll at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await importGame(page);
@@ -60,5 +60,16 @@ for (const width of [320, 375, 768, 1024, 1440]) {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow, `${route} at ${width}px`).toBeLessThanOrEqual(0);
     }
+  });
+}
+
+// Sprint 3.1: on a short page the top bar must not stretch to share the leftover height.
+for (const { width, height } of [{ width: 390, height: 844 }, { width: 768, height: 1024 }]) {
+  test(`the top navigation bar stays compact on a short page at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto('/#/train');
+    await expect(page.getByRole('heading', { name: 'Treinar' })).toBeVisible();
+    const bar = await page.locator('.sidebar').boundingBox();
+    expect(bar?.height ?? 0, `top bar height at ${width}px`).toBeLessThanOrEqual(72);
   });
 }

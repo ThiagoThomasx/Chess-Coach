@@ -163,6 +163,8 @@
 @media (max-width: 860px) {
   .shell {
     grid-template-columns: minmax(0, 1fr);
+    /* The top bar keeps its own height; extra space on short pages goes to the content. */
+    grid-template-rows: auto 1fr;
   }
 
   .sidebar {

@@ -39,6 +39,8 @@ npm run typecheck
 
 Para os testes E2E, instale o navegador do Playwright uma vez: `npx playwright install chromium`.
 
+Integração contínua: [.github/workflows/ci.yml](.github/workflows/ci.yml) roda `npm ci`, a verificação dos arquivos do Stockfish, typecheck, Vitest (com o motor real), build e os testes E2E em cada pull request e em cada push na `main`. No CI, o Playwright serve o build já feito em vez de gerar outro.
+
 O build em `dist/` é estático e não carrega nada de CDNs (fontes do sistema, motor servido de `dist/engine/`). Depois de instalado, funciona sem internet; o teste E2E verifica que nenhuma requisição externa é feita.
 
 ## Estrutura
