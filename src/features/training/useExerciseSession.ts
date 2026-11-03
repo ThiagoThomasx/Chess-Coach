@@ -6,7 +6,8 @@ import { mainLine, normalizeExercise, playSolverMove, type SolveState } from '..
 import { recordAttempt } from '../../db/trainingRepo';
 import { getEngine } from '../../services/engine/engineService';
 
-export type SessionStatus = 'playing' | 'checking' | 'solved' | 'failed' | 'revealed';
+/** 'uncertain': the engine could not judge the move with confidence; nothing is recorded. */
+export type SessionStatus = 'playing' | 'checking' | 'solved' | 'failed' | 'revealed' | 'uncertain';
 
 export interface Feedback {
   kind: 'good' | 'bad' | 'info' | 'warn';
@@ -75,6 +76,10 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
           setLastMove(null);
           setMoves(moves);
           setStatus('playing');
+          setFeedback({ kind: 'warn', text: v.message });
+          return;
+        case 'uncertain':
+          setStatus('uncertain');
           setFeedback({ kind: 'warn', text: v.message });
           return;
         case 'rejected':

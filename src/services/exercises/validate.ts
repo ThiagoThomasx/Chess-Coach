@@ -66,10 +66,13 @@ export function motifHint(fen: string, uci: string): string | null {
   if (isCheck) return 'O lance certo dá xeque.';
   if (isCapture) return 'O lance certo é uma captura.';
   if (attackedTargets(after, uci.slice(2, 4) as Square).length >= 2) return 'O lance certo ataca duas peças valiosas ao mesmo tempo.';
-  return `O lance certo é um lance tranquilo (sem captura nem xeque) de ${PIECE_ARTICLE_PT[piece.type]}.`;
+  // Naming a piece the solver has only one of would point at it as hint 2 does.
+  const sameType = chess.board().flat().filter((sq) => sq && sq.color === piece.color && sq.type === piece.type).length;
+  const quiet = 'O lance certo é um lance tranquilo (sem captura nem xeque)';
+  return sameType > 1 ? `${quiet} de ${PIECE_OF_PT[piece.type]}.` : `${quiet}.`;
 }
 
-const PIECE_ARTICLE_PT: Record<PieceSymbol, string> = { p: 'um peão', n: 'um cavalo', b: 'um bispo', r: 'uma torre', q: 'a dama', k: 'o rei' };
+const PIECE_OF_PT: Record<PieceSymbol, string> = { p: 'um peão', n: 'um cavalo', b: 'um bispo', r: 'uma torre', q: 'uma dama', k: 'o rei' };
 
 /** Progressive hints for the current node: 1 = kind of move (motifHint), 2 = piece to move, 3 = the move. */
 export function hintForNode(fen: string, objective: string, accepted: readonly { uci: string; san: string }[], level: number): { text: string; square?: string } {

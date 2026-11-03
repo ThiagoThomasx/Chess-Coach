@@ -7,7 +7,7 @@ type Props = { profile: readonly SkillEstimate[] };
 const CONF_CLASS: Record<SkillEstimate['confidence'], string> = {
   insufficient: 'tag',
   initial: 'tag tag-info',
-  consistent: 'tag tag-good',
+  consistent: 'tag tag-info',
   provisional_mastery: 'tag tag-good',
   needs_review: 'tag tag-warn',
 };

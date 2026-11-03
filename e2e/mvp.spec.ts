@@ -52,6 +52,9 @@ test('import → analyze → explain → exercise → solve → reload → profi
   await expect(explanation).toContainText(/Erro grave|Erro/);
   await expect(explanation).toContainText('Peça desprotegida');
   await expect(explanation).toContainText('exd4');
+  // Sprint 3: the kind of error is named, and the better alternative's continuation is shown.
+  await expect(page.getByTestId('error-kind')).toHaveText('Erro tático');
+  await expect(explanation).toContainText('O que acontece depois da alternativa');
   await expect(page.locator('.engine-line').first()).toBeVisible();
 
   // 8. The position becomes an exercise (auto-generated, or via the button).
@@ -81,6 +84,12 @@ test('import → analyze → explain → exercise → solve → reload → profi
   // One game is too little evidence for a point estimate: only the interval is shown (audit B4).
   await expect(page.getByTestId('skill-threats')).toContainText(/entre \d+% e \d+%/);
   await expect(page.getByTestId('skill-threats').locator('.pt')).toHaveCount(0);
+
+  // The dashboard groups competences by state and counts analyzed games (Sprint 3).
+  await page.goto('/#/');
+  await expect(page.getByTestId('stat-analyzed')).toHaveText('1');
+  await expect(page.getByTestId('skill-states')).toBeVisible();
+  await expect(page.getByTestId('skill-state-insufficient')).toContainText('Identificação de ameaças');
 
   expect(external, 'no requests to external hosts').toEqual([]);
   expect(errors, 'no console errors').toEqual([]);

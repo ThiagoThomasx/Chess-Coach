@@ -7,8 +7,8 @@ import { EmptyState } from '../../components/feedback/EmptyState';
 import { THEME_LABEL } from '../../services/pedagogy/concepts';
 import { Difficulty } from './Difficulty';
 import { MiniBoard } from './MiniBoard';
-import type { Attempt, Exercise, Theme } from '../../types/domain';
-import { estimateProfile } from '../../services/adaptation/skills';
+import type { Attempt, Exercise, Skill, Theme } from '../../types/domain';
+import { estimateProfile, SKILL_LABEL } from '../../services/adaptation/skills';
 
 type Status = 'all' | 'due' | 'new' | 'failed' | 'mastered' | 'recommended';
 
@@ -36,6 +36,7 @@ export function TrainingPage() {
   const theme = (params.get('theme') as Theme | null) ?? '';
   const difficulty = Number(params.get('difficulty') ?? 0);
   const source = params.get('source') ?? '';
+  const skill = (params.get('skill') as Skill | null) ?? '';
   const now = Date.now();
 
   const byExercise = useMemo(() => {
@@ -57,6 +58,7 @@ export function TrainingPage() {
     if (theme && e.theme !== theme) return false;
     if (difficulty && e.difficulty !== difficulty) return false;
     if (source && e.source !== source) return false;
+    if (skill && e.skill !== skill) return false;
     switch (status) {
       case 'due':
         return e.srs.dueAt <= now;
@@ -77,6 +79,7 @@ export function TrainingPage() {
   const due = (exercises ?? []).filter((e) => e.srs.dueAt <= now).sort((a, b) => a.srs.dueAt - b.srs.dueAt);
   const dueCount = due.length;
   const themes = [...new Set((exercises ?? []).map((e) => e.theme))];
+  const skills = [...new Set((exercises ?? []).map((e) => e.skill))];
 
   return (
     <div className="page">
@@ -108,6 +111,17 @@ export function TrainingPage() {
               {themes.map((t) => (
                 <option key={t} value={t}>
                   {THEME_LABEL[t]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Competência</span>
+            <select className="select" value={skill} onChange={(e) => set('skill', e.target.value)} data-testid="filter-skill">
+              <option value="">Todas</option>
+              {skills.map((k) => (
+                <option key={k} value={k}>
+                  {SKILL_LABEL[k]}
                 </option>
               ))}
             </select>

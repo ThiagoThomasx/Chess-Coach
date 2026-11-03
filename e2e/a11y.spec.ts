@@ -48,3 +48,17 @@ for (const width of [1100, 1300]) {
     await expect(page.getByRole('columnheader', { name: 'Análise' })).toBeInViewport();
   });
 }
+
+// Sprint 3: the main pages fit every common width without horizontal page scroll.
+for (const width of [320, 375, 768, 1024, 1440]) {
+  test(`dashboard, training and progress have no horizontal page scroll at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await importGame(page);
+    for (const route of ['/#/', '/#/train', '/#/progress', '/#/openings']) {
+      await page.goto(route);
+      await expect(page.locator('main, .page').first()).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow, `${route} at ${width}px`).toBeLessThanOrEqual(0);
+    }
+  });
+}

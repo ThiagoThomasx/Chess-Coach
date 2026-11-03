@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { goalFor, legacyTree, mainLine, mateBudget, normalizeExercise, playSolverMove, type SolveState } from '../src/services/exercises/sequence';
+import { defenseRepliesFrom, goalFor, legacyTree, mainLine, mateBudget, normalizeExercise, playSolverMove, UNCERTAIN_MARGIN, type SolveState } from '../src/services/exercises/sequence';
 import type { EngineLike } from '../src/services/analysis/gameAnalyzer';
 import { withSolutionTree } from '../src/services/exercises/generate';
 import { Chess } from 'chess.js';
@@ -200,5 +200,61 @@ describe('long mates (audit C1)', () => {
     const ex = exercise();
     const v = await playSolverMove(ex, { node: { fen: ROOKS, accepted: [], replies: {}, depth: 0 }, userMoves: 0, fen: ROOKS }, 'a1a7', { engine, depth: 12, tolerance: 5 });
     expect(v.kind).not.toBe('unverifiable');
+  });
+});
+
+describe('opponent replies are real defenses (Sprint 3)', () => {
+  // Black to move, being mated: win% is 0 for every reply, so it cannot rank them.
+  const FEN = '8/8/8/8/8/4k3/8/3QR1K1 b - - 0 1';
+  const analysis = (lines: [string, Score][]) => ({ fen: FEN, depth: 16, multiPv: lines.length, timeMs: 0, complete: true, lines: lines.map(([u, s], i) => ({ multipv: i + 1, depth: 16, score: s, pv: [u] })) });
+
+  it('keeps only the longest mate when every reply loses', () => {
+    // White POV: mate 3 = Black mated in 3 (best defense), mate 2 = faster mate.
+    const r = defenseRepliesFrom(analysis([['e3f3', mate(3)], ['e3f4', mate(2)]]) as never, 5);
+    expect(r.map((m) => m.uci)).toEqual(['e3f3']);
+  });
+
+  it('drops a reply that loses material even when win% has saturated', () => {
+    // From Black's POV both are hopeless (~2.5% vs ~0.5%): within 5 p.p., but 4 pawns apart.
+    const r = defenseRepliesFrom(analysis([['e3f3', cp(900)], ['e3f4', cp(1300)], ['e3f2', cp(930)]]) as never, 5);
+    expect(r.map((m) => m.uci)).toEqual(['e3f3', 'e3f2']);
+  });
+});
+
+describe('judging moves outside the tree (Sprint 3)', () => {
+  const single: ExerciseGoal = { kind: 'single', maxUserMoves: 1, targetWin: 60 };
+  const node: SolutionNode = { fen: ROOKS, accepted: [{ uci: 'a1a7', san: 'Ra7', score: cp(60) }], replies: {}, depth: 16 };
+  const state: SolveState = { node, userMoves: 0, fen: ROOKS };
+  /** Engine that honours searchmoves with fixed scores per root move. */
+  const engineWith = (scores: Record<string, number>, calls: { searchMoves?: string[]; depth?: number }[] = []): EngineLike => ({
+    analyze: async (req) => {
+      calls.push({ searchMoves: req.searchMoves, depth: req.depth });
+      const moves = req.searchMoves ?? Object.keys(scores);
+      const lines = moves.map((u) => ({ multipv: 0, depth: req.depth ?? 12, score: cp(scores[u] ?? 0), pv: [u] })).sort((a, b) => b.score.value - a.score.value).map((l, i) => ({ ...l, multipv: i + 1 }));
+      return { fen: req.fen, depth: req.depth ?? 12, multiPv: lines.length, timeMs: 0, complete: true, lines } as never;
+    },
+  });
+
+  it('compares both moves inside one search (searchmoves), not against a stored score from another search', async () => {
+    // The stored score (60) is stale: in the same search Ra7 and Kh1 are equal, so Kh1 is accepted.
+    const calls: { searchMoves?: string[] }[] = [];
+    const v = await playSolverMove(exercise({ goal: single, kind: 'single' }), state, 'g1h1', { engine: engineWith({ a1a7: 20, g1h1: 15 }, calls), depth: 12, tolerance: 5 });
+    expect(v.kind).toBe('solved');
+    expect(calls[0]?.searchMoves).toEqual(['a1a7', 'g1h1']);
+  });
+
+  it('a borderline move is re-checked deeper and reported as uncertain, not as an error', async () => {
+    // 70 cp vs 0 cp ≈ 6.4 p.p.: just above the 5 p.p. tolerance, inside the uncertainty band.
+    const calls: { depth?: number }[] = [];
+    const v = await playSolverMove(exercise({ goal: single, kind: 'single' }), state, 'g1h1', { engine: engineWith({ a1a7: 70, g1h1: 0 }, calls), depth: 12, tolerance: 5 });
+    expect(v.kind).toBe('uncertain');
+    if (v.kind === 'uncertain') expect(v.winLoss).toBeGreaterThan(5);
+    if (v.kind === 'uncertain') expect(v.winLoss).toBeLessThanOrEqual(5 + UNCERTAIN_MARGIN);
+    expect(calls.map((c) => c.depth)).toContain(16);
+  });
+
+  it('a clearly worse move is still rejected', async () => {
+    const v = await playSolverMove(exercise({ goal: single, kind: 'single' }), state, 'g1h1', { engine: engineWith({ a1a7: 300, g1h1: 0 }), depth: 12, tolerance: 5 });
+    expect(v.kind).toBe('rejected');
   });
 });

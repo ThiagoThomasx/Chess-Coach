@@ -1,11 +1,12 @@
 import { Chess } from 'chess.js';
 import type { AcceptableMove, ClassificationThresholds, EngineLine, Exercise, Game, MoveReview, PositionAnalysis, Theme } from '../../types/domain';
-import { legalMoveCount, parseUci, uciToSan } from '../chess/position';
+import { applyUci, legalMoveCount, parseUci, uciToSan } from '../chess/position';
+import { enPrise, seeCapture } from '../chess/tactics';
 import { winPercentFor } from '../analysis/evaluation';
 import { DEFAULT_THRESHOLDS } from '../analysis/classify';
-import { detectConcepts, THEME_SKILL } from '../pedagogy/concepts';
+import { detectConcepts, skillOf } from '../pedagogy/concepts';
 import { newId } from '../../utils/hash';
-import type { EngineLike } from '../analysis/gameAnalyzer';
+import { fenKey, type EngineLike } from '../analysis/gameAnalyzer';
 import { buildSolutionTree, goalFor, mainLine, type TreeOptions } from './sequence';
 
 export const DEFAULT_TOLERANCE = 5; // win% points
@@ -58,12 +59,23 @@ export function estimateDifficulty(fen: string, solution: readonly string[], the
   const isCheck = chess.inCheck();
   let d = 2;
   if (!isCapture && !isCheck) d += 1; // quiet moves are harder to find
+  if (isSacrifice(fen, first)) d += 1; // giving material away is counter-intuitive
   const userMoves = Math.ceil(solution.length / 2);
   if (userMoves >= 3) d += 1;
   if (userMoves >= 2 && theme !== 'missed_capture') d += 0.5;
   if (theme === 'missed_capture' && userMoves === 1) d -= 1;
   if (alternatives > 1) d -= 0.5;
   return Math.max(1, Math.min(5, Math.round(d)));
+}
+
+/** The move gives material: a losing capture by SEE, or the moved piece left capturable with gain. */
+export function isSacrifice(fen: string, uci: string): boolean {
+  const see = seeCapture(fen, uci);
+  if (see !== null && see < 0) return true;
+  const after = applyUci(fen, uci);
+  if (!after) return false;
+  const mover = fen.split(' ')[1] === 'b' ? 'b' : 'w';
+  return enPrise(after, mover).some((e) => e.square === parseUci(uci).to);
 }
 
 function objectiveFor(theme: Theme, mateIn?: number, motifSide?: 'own' | 'opponent'): string {
@@ -131,7 +143,7 @@ export function buildExercise({ game, review, before, replyLine, tolerance = DEF
     objective: objectiveFor(theme, mateIn, motifSide),
     theme,
     ...(motifSide ? { motifSide } : {}),
-    skill: THEME_SKILL[theme],
+    skill: concepts[0] ? skillOf(concepts[0]) : skillOf({ theme }),
     bestMove,
     acceptableMoves: acceptable,
     solutionLine,
@@ -152,13 +164,20 @@ export function selectExercisePositions(
   positions: readonly (PositionAnalysis | null)[],
   opts: { max: number; thresholds?: ClassificationThresholds; existingFens?: Set<string> },
 ): MoveReview[] {
-  const seen = opts.existingFens ?? new Set<string>();
-  return reviews
+  // Positions are compared without move counters: the same position reached at another move number is a repeat.
+  const seen = new Set([...(opts.existingFens ?? [])].map(fenKey));
+  const picked: MoveReview[] = [];
+  const candidates = reviews
     .filter((r) => game.userColor === undefined || r.color === game.userColor)
     .filter((r) => checkCandidate(r, positions[r.ply - 1] ?? null, opts.thresholds).ok)
-    .filter((r) => !seen.has(r.fenBefore))
-    .sort((a, b) => b.winLoss - a.winLoss)
-    .slice(0, opts.max);
+    .sort((a, b) => b.winLoss - a.winLoss);
+  for (const r of candidates) {
+    if (picked.length >= opts.max) break;
+    if (seen.has(fenKey(r.fenBefore))) continue;
+    seen.add(fenKey(r.fenBefore));
+    picked.push(r);
+  }
+  return picked;
 }
 
 const OBJECTIVE_BY_KIND = {

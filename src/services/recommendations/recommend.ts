@@ -9,7 +9,7 @@ export interface EvidenceRef {
 }
 
 export interface Recommendation {
-  kind: 'theme' | 'reviews' | 'explore' | 'import';
+  kind: 'theme' | 'reviews' | 'skill' | 'explore' | 'import';
   title: string;
   message: string;
   theme?: Theme;
@@ -37,9 +37,42 @@ const THEME_ADVICE: Partial<Record<Theme, string>> = {
 
 const MIN_OCCURRENCES = 2;
 
-/** Counts verified error themes on the user's moves, with references to each position. */
-export function errorThemes(games: readonly AnalyzedGameInput[]): Map<Theme, EvidenceRef[]> {
-  const map = new Map<Theme, EvidenceRef[]>();
+/** Motifs that exist on both sides: the player's missed tactic vs the opponent's allowed one. */
+const TWO_SIDED: readonly Theme[] = ['fork', 'discovered_attack', 'pin', 'overloaded', 'deflection', 'combination'];
+
+const OPPONENT_ADVICE: Partial<Record<Theme, string>> = {
+  fork: 'Em {n} posições, seu lance permitiu um ataque duplo do adversário. Antes de cada lance, procure as casas de onde uma peça adversária atingiria duas peças suas ou o rei.',
+  discovered_attack: 'Em {n} posições, seu lance permitiu um ataque descoberto. Observe peças adversárias alinhadas, com uma peça de longo alcance por trás.',
+  pin: 'Em {n} posições, uma cravada do adversário ganhou material. Não conte peças cravadas como defensoras.',
+};
+
+/** A recurring error: a verified theme on one side (the player's own tactic or the opponent's). */
+export interface ErrorPattern {
+  key: string;
+  theme: Theme;
+  side?: 'own' | 'opponent';
+  label: string;
+  refs: EvidenceRef[];
+}
+
+export function patternLabel(theme: Theme, side?: 'own' | 'opponent'): string {
+  if (!TWO_SIDED.includes(theme)) return THEME_LABEL[theme];
+  return side === 'own' ? `${THEME_LABEL[theme]} não aproveitado(a)` : `${THEME_LABEL[theme]} do adversário`;
+}
+
+function adviceFor(p: ErrorPattern): string {
+  const n = String(p.refs.length);
+  const template = p.side === 'opponent' && TWO_SIDED.includes(p.theme) ? OPPONENT_ADVICE[p.theme] ?? `Em {n} posições, seu lance permitiu ao adversário: ${p.label.toLowerCase()}.` : THEME_ADVICE[p.theme] ?? `O tema "${p.label}" apareceu em {n} posições recentes.`;
+  return template.replace('{n}', n);
+}
+
+/**
+ * Counts verified error patterns on the user's moves, with references to each
+ * position. The side is part of the key: allowing a fork and missing one are
+ * different weaknesses with different advice.
+ */
+export function errorThemes(games: readonly AnalyzedGameInput[]): Map<string, ErrorPattern> {
+  const map = new Map<string, ErrorPattern>();
   for (const g of games) {
     if (!g.userColor) continue;
     for (const r of g.reviews) {
@@ -47,8 +80,10 @@ export function errorThemes(games: readonly AnalyzedGameInput[]): Map<Theme, Evi
       if (r.classification !== 'mistake' && r.classification !== 'blunder' && r.classification !== 'inaccuracy') continue;
       const c = detectConcepts(r, g.replyLines[r.ply] ?? [])[0];
       if (!c || !isVerifiedConcept(c)) continue;
-      const list = map.get(c.theme) ?? [];
-      map.set(c.theme, [...list, { gameId: g.gameId, ply: r.ply, san: r.san }]);
+      const side = TWO_SIDED.includes(c.theme) ? c.side : undefined;
+      const key = side ? `${c.theme}:${side}` : c.theme;
+      const cur = map.get(key) ?? { key, theme: c.theme, ...(side ? { side } : {}), label: patternLabel(c.theme, side), refs: [] };
+      map.set(key, { ...cur, refs: [...cur.refs, { gameId: g.gameId, ply: r.ply, san: r.san }] });
     }
   }
   return map;
@@ -56,21 +91,31 @@ export function errorThemes(games: readonly AnalyzedGameInput[]): Map<Theme, Evi
 
 /**
  * "Seu próximo treino": only emits a theme recommendation when the same
- * verified theme appears at least twice in the history.
+ * verified pattern appears at least twice in the history.
  */
 export function nextTraining(input: { games: readonly AnalyzedGameInput[]; dueReviews: number; totalGames: number; profile: readonly SkillEstimate[] }): Recommendation {
   if (input.totalGames === 0) {
     return { kind: 'import', title: 'Importe sua primeira partida', message: 'Importe um arquivo PGN para que o ChessQuest analise seus lances e monte um plano de treino.', evidence: [], action: { label: 'Importar partidas', to: '/games' } };
   }
-  const themes = [...errorThemes(input.games).entries()].filter(([, refs]) => refs.length >= MIN_OCCURRENCES).sort((a, b) => b[1].length - a[1].length);
-  const top = themes[0];
+  const top = [...errorThemes(input.games).values()].filter((p) => p.refs.length >= MIN_OCCURRENCES).sort((a, b) => b.refs.length - a.refs.length)[0];
   if (top) {
-    const [theme, refs] = top;
-    const template = THEME_ADVICE[theme] ?? `O tema "${THEME_LABEL[theme]}" apareceu em {n} posições recentes.`;
-    return { kind: 'theme', title: THEME_LABEL[theme], message: template.replace('{n}', String(refs.length)), theme, evidence: refs, action: { label: 'Treinar este tema', to: `/train?theme=${theme}` } };
+    return { kind: 'theme', title: top.label, message: adviceFor(top), theme: top.theme, evidence: top.refs, action: { label: 'Treinar este tema', to: `/train?theme=${top.theme}` } };
   }
   if (input.dueReviews > 0) {
     return { kind: 'reviews', title: 'Revisões pendentes', message: `Você tem ${input.dueReviews} exercício(s) para revisar hoje.`, evidence: [], action: { label: 'Revisar agora', to: '/train?filter=due' } };
+  }
+  // A competence flagged for review, with the numbers that flagged it.
+  const review = input.profile.filter((p) => p.confidence === 'needs_review' && p.interval).sort((a, b) => (a.recentRate ?? a.level ?? 1) - (b.recentRate ?? b.level ?? 1))[0];
+  if (review?.interval) {
+    const recent = review.recentRate !== null ? `taxa recente ${Math.round(review.recentRate * 100)}%` : '';
+    const range = `estimativa entre ${Math.round(review.interval[0] * 100)}% e ${Math.round(review.interval[1] * 100)}%`;
+    return {
+      kind: 'skill',
+      title: `Revisar: ${SKILL_LABEL[review.skill]}`,
+      message: `${SKILL_LABEL[review.skill]} precisa de revisão (${[recent, range].filter(Boolean).join('; ')}, em ${review.events} evidência(s)). Treine exercícios desta competência.`,
+      evidence: [],
+      action: { label: 'Treinar esta competência', to: `/train?skill=${review.skill}` },
+    };
   }
   const weak = input.profile.filter((p) => p.confidence === 'insufficient');
   if (input.games.length === 0) {

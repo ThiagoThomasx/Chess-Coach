@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { detectConcepts } from '../src/services/pedagogy/concepts';
-import { explainMove } from '../src/services/pedagogy/explain';
+import { errorKindOf, explainMove, threatBefore } from '../src/services/pedagogy/explain';
+import { settledSwing } from '../src/services/chess/material';
 import { applyUci } from '../src/services/chess/position';
 import type { MoveReview, Score } from '../src/types/domain';
 
@@ -243,5 +244,77 @@ describe('"why" compares both moves or is omitted (audit M7)', () => {
   it('no template uses the bare engine line as the justification', () => {
     const source = readFileSync(new URL('../src/services/pedagogy/explain.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/continuação preferida pelo motor|defesa mais (sólida|resistente)|Sequência do motor:/);
+  });
+});
+
+describe('Sprint 3: six-question explanations', () => {
+  // Blackburne–Shilling after 4.Nxe5?: the engine line Qg5 Bxf7+ Kd8 Ng4 Nh6 c3 Nc2+ Qxc2 Qxg4 Bb3.
+  const BLACKBURNE = 'r1bqkbnr/pppp1ppp/8/4p3/2BnP3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4';
+  const REPLY = ['d8g5', 'c4f7', 'e8d8', 'e5g4', 'g8h6', 'c2c3', 'd4c2', 'd1c2', 'g5g4', 'f7b3'];
+
+  it('material is not measured right before a capture the line is about to make', () => {
+    // Six plies end on a quiet king move, but the line's next move wins the rook on a1 (no recapture, no check).
+    const fen = '4k3/8/8/8/8/8/1q4P1/R3K3 b - - 0 1';
+    const s = settledSwing(fen, ['e8e7', 'e1f1', 'e7e6', 'f1g1', 'e6e5', 'g1h2', 'b2a1'], 'w');
+    expect(s).toMatchObject({ plies: 7, delta: -5, settled: true });
+  });
+
+  it('a line ending on a capture nobody can answer is settled; one with a recapture pending is not', () => {
+    // 3.Nd4?? exd4 c3 d5 cxd4 dxe4 d5 Qxd5: the queen on d5 cannot be recaptured.
+    const after = applyUci('r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3', 'f3d4') as string;
+    expect(settledSwing(after, ['e5d4', 'c2c3', 'd7d5', 'c3d4', 'd5e4', 'd4d5', 'd8d5'], 'w')).toMatchObject({ delta: -4, settled: true });
+    // Rxd5 can be met by …exd5: the exchange is unfinished.
+    expect(settledSwing('3qk3/8/4p3/3n4/8/8/8/3RK3 w - - 0 1', ['d1d5'], 'w').settled).toBe(false);
+  });
+
+  it('a capture without a recognized motif is a calculation error, never "opening principles"', () => {
+    const r = review(BLACKBURNE, 'f3e5', 'Nxe5', { ply: 7, bestLine: ['e1g1'], evalBefore: cp(116), evalAfter: cp(-59), winBefore: 60, winAfter: 44, winLoss: 16 });
+    const e = explainMove(r, REPLY);
+    expect(e.theme).not.toBe('opening');
+    expect(e.skill).not.toBe('openings');
+    if (e.theme === 'unsound_forcing') expect(e.kind).toBe('calculation');
+  });
+
+  it('names the opponent threat before the move from legal facts, and omits it when there is none', () => {
+    // Black's rook on d8 attacks the undefended Nd4 (SEE > 0) before White's quiet king move.
+    const threatened = review('3r2k1/8/8/8/3N4/8/6P1/6K1 w - - 0 1', 'g1h1', 'Kh1', { bestLine: ['d4f5'] });
+    expect(threatBefore(threatened)).toMatch(/seu cavalo em d4/);
+    const quiet = review('6k1/8/8/8/3N4/8/6P1/6K1 w - - 0 1', 'g1h1', 'Kh1', { bestLine: ['d4f5'] });
+    expect(threatBefore(quiet)).toBeUndefined();
+  });
+
+  it('a mate-in-one threat before the move is named with its move', () => {
+    // Back rank: ...Ra1# is threatened before White plays a king move.
+    const r = review('r5k1/8/8/8/8/8/5PPP/6K1 w - - 0 1', 'g1f1', 'Kf1', { bestLine: ['h2h3'] });
+    expect(threatBefore(r)).toMatch(/mate em 1 com Ra1#?/);
+  });
+
+  it('says what happens after the better move (engine line and evaluation)', () => {
+    const r = review(ITALIAN, 'f3d4', 'Nd4', { ply: 5, bestLine: ['f1c4', 'f8c5', 'c2c3'], evalBefore: cp(30) });
+    expect(explainMove(r, ['e5d4', 'c2c3']).afterAlternative).toMatch(/Bc4 Bc5 c3 — avaliação \+0[.,]30/);
+  });
+
+  it('labels each kind of decision', () => {
+    const base = { category: 'tactical' as const, verified: true, evidence: {} };
+    expect(errorKindOf({ ...base, theme: 'fork', side: 'opponent' })).toBe('tactical');
+    expect(errorKindOf({ ...base, theme: 'fork', side: 'own' })).toBe('missed_opportunity');
+    expect(errorKindOf({ ...base, theme: 'losing_capture', side: 'opponent' })).toBe('calculation');
+    // An opponent combination after the player's own capture/check refutes that forcing move.
+    expect(errorKindOf({ ...base, theme: 'combination', side: 'opponent', verified: false }, true)).toBe('calculation');
+    expect(errorKindOf({ ...base, theme: 'combination', side: 'opponent', verified: false }, false)).toBe('tactical');
+    expect(errorKindOf({ ...base, theme: 'conversion', category: 'positional' })).toBe('strategic');
+    expect(errorKindOf({ ...base, theme: 'positional', category: 'positional' })).toBe('positional');
+    const best = explainMove(review(ITALIAN, 'f1c4', 'Bc4', { classification: 'best', winLoss: 0 }), []);
+    const close = explainMove(review(ITALIAN, 'f1b5', 'Bb5', { classification: 'excellent', winLoss: 1, bestMoveSan: 'Bc4' }), []);
+    expect([best.kind, close.kind]).toEqual(['correct', 'equivalent']);
+  });
+
+  it('an unverified inaccuracy gets the facts, not a full lesson (proportional)', () => {
+    const r = review(ITALIAN, 'h2h3', 'h3', { ply: 5, classification: 'inaccuracy', winLoss: 6, bestLine: ['f1c4'], bestMoveSan: 'Bc4' });
+    const e = explainMove(r, ['g8f6']);
+    expect(e.confidence).toBe('limited');
+    expect(e.concept).toBeUndefined();
+    expect(e.recognize).toBeUndefined();
+    expect(e.betterAlternative).toBe('Bc4.');
   });
 });

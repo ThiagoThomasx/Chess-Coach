@@ -84,6 +84,7 @@ export const THEME_SKILL: Record<Theme, Skill> = {
   losing_capture: 'calculation',
   combination: 'calculation',
   conversion: 'strategy',
+  unsound_forcing: 'calculation',
 };
 
 export const THEME_LABEL: Record<Theme, string> = {
@@ -107,7 +108,20 @@ export const THEME_LABEL: Record<Theme, string> = {
   losing_capture: 'Captura que perde material',
   combination: 'Combinação tática',
   conversion: 'Conversão de vantagem',
+  unsound_forcing: 'Lance forçante que não se sustenta',
 };
+
+/** Opponent motifs that, when allowed, measure spotting the opponent's threats rather than one's own tactics. */
+const THREAT_WHEN_ALLOWED: readonly Theme[] = ['fork', 'discovered_attack', 'pin', 'overloaded', 'deflection'];
+
+/**
+ * Competence a concept measures. A tactic the opponent was allowed to play is
+ * a threat-identification failure; the same motif missed by the player is a
+ * tactical/pattern one (the theme map alone would merge both).
+ */
+export function skillOf(c: Pick<Concept, 'theme' | 'side'>): Skill {
+  return c.side === 'opponent' && THREAT_WHEN_ALLOWED.includes(c.theme) ? 'threats' : THEME_SKILL[c.theme];
+}
 
 /** Material gain needed (points) before a line counts as tactical. */
 export const MATERIAL_THRESHOLD = 2;
@@ -267,13 +281,27 @@ export function detectConcepts(review: MoveReview, replyLine: readonly string[])
   if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', category: 'positional', verified: false, evidence: { bestSan, ...compare } });
 
   // 6. No tactical evidence: positional/phase explanation, always limited.
+  // A capture or check is a concrete decision, not a matter of phase principles.
   if (out.length === 0) {
     const phase = gamePhase(review.fenBefore, review.ply);
-    const theme: Theme = review.winBefore >= 80 ? 'conversion' : phase === 'opening' ? 'opening' : phase === 'endgame' ? 'endgame' : 'positional';
-    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan, lineSettled: reply.settled, linePlies: reply.plies, ...compare } });
+    const theme: Theme =
+      review.winBefore >= 80 ? 'conversion' : isForcingMove(review.fenBefore, review.uci) ? 'unsound_forcing' : phase === 'opening' ? 'opening' : phase === 'endgame' ? 'endgame' : 'positional';
+    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan, replySan, lineSettled: reply.settled, linePlies: reply.plies, ...compare } });
   }
   // Facts first: a verified concept always outranks an unverified one (stable otherwise).
   return [...out.filter((c) => c.verified), ...out.filter((c) => !c.verified)];
+}
+
+/** The move captures, promotes or gives check. */
+export function isForcingMove(fen: string, uci: string): boolean {
+  const { to, promotion } = parseUci(uci);
+  if (promotion || new Chess(fen).get(to)) return true;
+  const after = applyUci(fen, uci);
+  if (!after) return false;
+  if (new Chess(after).inCheck()) return true;
+  // En passant: a pawn changing file onto an empty square.
+  const piece = new Chess(fen).get(parseUci(uci).from);
+  return piece?.type === 'p' && uci[0] !== uci[2];
 }
 
 /** True when a concept is backed by concrete, settled evidence (not phase heuristics). */

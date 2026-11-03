@@ -86,7 +86,8 @@ export interface SettledSwing {
 /**
  * Material change for `color` along an engine line, measured at a quiet
  * point: plays `basePlies` moves, then keeps going while the last move was a
- * capture or gave check (up to `maxPlies`), so a pending recapture is never
+ * capture or gave check, or the line's next move captures (up to `maxPlies`),
+ * so neither a pending recapture nor a capture the line is about to make is
  * cut off. `settled` tells whether such a quiet point was reached.
  */
 export function settledSwing(fen: string, line: readonly string[], color: Color, basePlies = 6, maxPlies = 12): SettledSwing {
@@ -94,8 +95,9 @@ export function settledSwing(fen: string, line: readonly string[], color: Color,
   const start = materialBalance(fen, color);
   let plies = 0;
   let lastNoisy = false;
+  let lastTo: Square | undefined;
   for (const uci of line) {
-    if (plies >= maxPlies || (plies >= basePlies && !lastNoisy)) break;
+    if (plies >= maxPlies || (plies >= basePlies && !lastNoisy && !isForcing(chess, uci))) break;
     let m;
     try {
       m = chess.move(parseUci(uci));
@@ -104,8 +106,29 @@ export function settledSwing(fen: string, line: readonly string[], color: Color,
     }
     plies++;
     lastNoisy = m.isCapture() || m.isEnPassant() || m.isPromotion() || chess.inCheck();
+    lastTo = m.to;
   }
-  return { delta: materialBalance(chess.fen(), color) - start, plies, settled: !lastNoisy || chess.isGameOver() };
+  const next = line[plies];
+  const pending = plies >= maxPlies && next !== undefined && isForcing(chess, next);
+  // A line that runs past the horizon and stops on a capture is still settled when nothing can recapture
+  // (and no check is pending). Shorter lines stay unverified: the engine did not show what follows.
+  const unanswered = lastNoisy && plies > basePlies && plies < maxPlies && next === undefined && !chess.inCheck() && lastTo !== undefined && !chess.moves({ verbose: true }).some((mv) => mv.to === lastTo);
+  return { delta: materialBalance(chess.fen(), color) - start, plies, settled: (!lastNoisy && !pending) || unanswered || chess.isGameOver() };
+}
+
+/**
+ * The move wins material outright here: a capture or a promotion (illegal
+ * moves are not). Quiet checks are left out: long engine lines are full of
+ * them, and following each one would rarely reach a quiet point.
+ */
+function isForcing(chess: Chess, uci: string): boolean {
+  const probe = new Chess(chess.fen());
+  try {
+    const m = probe.move(parseUci(uci));
+    return m.isCapture() || m.isEnPassant() || m.isPromotion();
+  } catch {
+    return false;
+  }
 }
 
 /**

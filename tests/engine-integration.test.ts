@@ -10,7 +10,7 @@ import { explainMove } from '../src/services/pedagogy/explain';
 import { detectConcepts } from '../src/services/pedagogy/concepts';
 import { DEFAULT_THRESHOLDS } from '../src/services/analysis/classify';
 import { buildSolutionTree, goalFor, playSolverMove } from '../src/services/exercises/sequence';
-import type { Exercise, ExerciseGoal } from '../src/types/domain';
+import type { Exercise, ExerciseGoal, SolutionNode } from '../src/types/domain';
 import { parsePgnText } from '../src/services/pgn/parsePgn';
 import { SHORT_BLUNDER_GAME } from './fixtures';
 import { judgeOffBook, validateLine } from '../src/services/openings/practice';
@@ -158,6 +158,23 @@ describe('sequence exercises with the real engine', () => {
     const v = await playSolverMove(ex, { node: tree, userMoves: 0, fen }, tree.accepted[0]!.uci, { engine, depth: 14, tolerance: 5, choose: () => 0 });
     expect(['continue', 'solved']).toContain(v.kind);
   }, 240_000);
+
+  it('opponent replies in a mate tree are the longest defenses, never a faster mate (Sprint 3)', async () => {
+    // Q+R vs K, mate in 7: at depth 16 every king move is "0%" for Black, so win% cannot rank them.
+    const fen = '8/8/8/4k3/8/8/2Q5/1R4K1 w - - 0 1';
+    const best = (await engine.analyze({ fen, depth: 16 })).lines[0]!;
+    const goal = goalFor(fen, best, 'missed_mate', 5);
+    const tree = await buildSolutionTree(engine, fen, goal, { depth: 16, multiPv: 3, tolerance: 5 });
+    const check = (n: SolutionNode): void => {
+      for (const branches of Object.values(n.replies)) {
+        const distances = new Set(branches.map((b) => Math.abs(b.score.value)));
+        expect(branches.every((b) => b.score.kind === 'mate')).toBe(true);
+        expect(distances.size).toBeLessThanOrEqual(1);
+        branches.forEach((b) => b.next && check(b.next));
+      }
+    };
+    check(tree);
+  }, 300_000);
 
   it('judges a move outside the stored lines with a fresh search', async () => {
     const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';

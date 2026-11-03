@@ -172,7 +172,9 @@ export type Theme =
   | 'deflection'
   | 'losing_capture'
   | 'combination'
-  | 'conversion';
+  | 'conversion'
+  /** A capture or check whose consequences the engine line refutes, without a recognized motif. */
+  | 'unsound_forcing';
 
 export interface SrsState {
   box: number;

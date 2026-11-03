@@ -2,7 +2,47 @@ import type { MoveReview, Skill, Theme } from '../../types/domain';
 import { CLASS_LABEL } from '../analysis/classify';
 import { formatScore } from '../analysis/evaluation';
 import { PIECE_NAME_PT } from '../chess/material';
-import { detectConcepts, THEME_LABEL, THEME_SKILL, type Concept, type ConceptCategory } from './concepts';
+import { uciLineToSan, uciToSan } from '../chess/position';
+import { enPrise, mateThreats, nullMoveFen } from '../chess/tactics';
+import { detectConcepts, isForcingMove, skillOf, THEME_LABEL, type Concept, type ConceptCategory } from './concepts';
+
+/**
+ * Kind of decision the move was, from the detected evidence:
+ * tactical (allowed the opponent a tactic or mate), missed opportunity (own
+ * tactic or mate not played), calculation (a capture/check refuted by the
+ * engine line), strategic (a winning position spoiled without material
+ * change), positional (evaluation only), correct / equivalent (good moves).
+ */
+export type ErrorKind = 'tactical' | 'missed_opportunity' | 'calculation' | 'strategic' | 'positional' | 'lost_position' | 'correct' | 'equivalent' | 'inconclusive';
+
+export const ERROR_KIND_LABEL: Record<ErrorKind, string> = {
+  tactical: 'Erro tático',
+  missed_opportunity: 'Oportunidade perdida',
+  calculation: 'Erro de cálculo',
+  strategic: 'Erro estratégico',
+  positional: 'Erro posicional',
+  lost_position: 'Defesa em posição perdida',
+  correct: 'Lance correto',
+  equivalent: 'Lance equivalente',
+  inconclusive: 'Sem veredito',
+};
+
+const CALCULATION_THEMES: readonly Theme[] = ['losing_capture', 'unsound_forcing'];
+
+/**
+ * `playedForcing`: the move was a capture or check. If the opponent then wins
+ * material by a sequence with no simple motif, the forcing move was
+ * refuted by calculation rather than by an overlooked one-move threat.
+ */
+export function errorKindOf(c: Concept, playedForcing = false): ErrorKind {
+  if (c.theme === 'mate_threat') return 'lost_position';
+  if (CALCULATION_THEMES.includes(c.theme)) return 'calculation';
+  if (playedForcing && c.theme === 'combination' && c.side === 'opponent') return 'calculation';
+  if (c.side === 'own') return 'missed_opportunity';
+  if (c.theme === 'conversion') return 'strategic';
+  if (c.category === 'positional') return 'positional';
+  return 'tactical';
+}
 
 /**
  * Structured explanation. Each field answers one pedagogical question:
@@ -12,8 +52,13 @@ import { detectConcepts, THEME_LABEL, THEME_SKILL, type Concept, type ConceptCat
 export interface Explanation {
   title: string;
   category: ConceptCategory | 'good' | 'inconclusive';
+  kind: ErrorKind;
   whatHappened: string;
+  /** The opponent's threat before the move (legal-move facts only); omitted when none was found. */
+  threat?: string;
   betterAlternative?: string;
+  /** What follows the better move: the engine line and evaluation. */
+  afterAlternative?: string;
   why?: string;
   consequence?: string;
   concept?: string;
@@ -224,6 +269,13 @@ const TEMPLATES: Record<Theme, Template> = {
     concept: 'Princípios de abertura: desenvolvimento, controle do centro e segurança do rei.',
     recognize: 'Revise a linha na biblioteca de aberturas e compare com o plano típico da estrutura.',
   }),
+  unsound_forcing: (r, c) => ({
+    fact: fallbackFact(c, `${r.san} é um lance forçante (captura ou xeque), e a linha do motor mostra que ele não se sustenta.`),
+    why: compareWhy(r, c),
+    consequence: c.evidence.replySan?.length ? `Resposta do motor: ${line(c.evidence.replySan, 7)}.` : undefined,
+    concept: 'Cálculo de lances forçantes: uma captura ou um xeque só funciona se as respostas do adversário, inclusive os contra-ataques, também forem calculadas.',
+    recognize: 'Antes de capturar ou dar xeque, procure a resposta mais incômoda do adversário: capturas, xeques e ataques a duas peças ao mesmo tempo.',
+  }),
   endgame: (_r, c) => ({
     fact: fallbackFact(c, 'Neste final, o lance escolhido perdeu parte significativa da avaliação.'),
     why: compareWhy(_r, c),
@@ -232,19 +284,48 @@ const TEMPLATES: Record<Theme, Template> = {
   }),
 };
 
+/**
+ * The opponent's threat before the move, from legal-move facts only: a mate
+ * in one on the null move, or a piece of the mover capturable with gain (SEE).
+ * Undefined when neither exists — the text never claims "there was no threat".
+ */
+export function threatBefore(r: MoveReview): string | undefined {
+  const mate = mateThreats(r.fenBefore)[0];
+  if (mate) {
+    const opp = nullMoveFen(r.fenBefore);
+    const san = opp ? uciToSan(opp, mate) : null;
+    return `O adversário ameaçava mate em 1${san ? ` com ${san}` : ''}.`;
+  }
+  const hanging = enPrise(r.fenBefore, r.color).sort((a, b) => b.gain - a.gain)[0];
+  if (hanging) return `O adversário ameaçava capturar ${your(hanging.type)} em ${hanging.square} com ganho de material.`;
+  return undefined;
+}
+
+/** Engine line after the better move, with the evaluation it reaches. */
+function afterAlternativeOf(r: MoveReview): string | undefined {
+  if (!r.bestLine.length || r.bestMoveUci === r.uci) return undefined;
+  const sans = uciLineToSan(r.fenBefore, r.bestLine.slice(0, 7));
+  return sans.length ? `Linha do motor: ${sans.join(' ')} — avaliação ${formatScore(r.evalBefore)}.` : undefined;
+}
+
+/** Themes whose main fact already states the threat; repeating it adds nothing. */
+const THREAT_IN_FACT: readonly Theme[] = ['ignored_threat', 'mate_threat'];
+
 /** Produces a structured explanation for a reviewed move. */
 export function explainMove(review: MoveReview, replyLine: readonly string[]): Explanation {
   const label = CLASS_LABEL[review.classification];
   const evalText = `Avaliação: ${formatScore(review.evalBefore)} com o melhor lance → ${formatScore(review.evalAfter)} depois do lance jogado (profundidade ${review.depth}).`;
   if (review.classification === 'inconclusive') {
-    return { title: label, category: 'inconclusive', whatHappened: `Você jogou ${review.san}. ${review.reason ?? 'Dados insuficientes para uma classificação confiável.'}`, confidence: 'limited', concepts: [] };
+    return { title: label, category: 'inconclusive', kind: 'inconclusive', whatHappened: `Você jogou ${review.san}. ${review.reason ?? 'Dados insuficientes para uma classificação confiável.'}`, confidence: 'limited', concepts: [] };
   }
   if (review.classification === 'best' || review.classification === 'excellent' || review.classification === 'good') {
+    const kind: ErrorKind = review.classification === 'best' ? 'correct' : 'equivalent';
     return {
       title: label,
       category: 'good',
-      whatHappened: `Você jogou ${review.san}. ${evalText}`,
-      ...(review.classification !== 'best' && review.bestMoveSan ? { betterAlternative: `O motor preferia ${review.bestMoveSan}, mas a diferença é pequena.` } : {}),
+      kind,
+      whatHappened: `Você jogou ${review.san}. ${ERROR_KIND_LABEL[kind]}. ${evalText}`,
+      ...(review.classification !== 'best' && review.bestMoveSan ? { betterAlternative: `O motor preferia ${review.bestMoveSan}, mas a diferença é pequena (${review.winLoss.toFixed(1)} p.p.).` } : {}),
       confidence: 'verified',
       concepts: [],
     };
@@ -252,17 +333,25 @@ export function explainMove(review: MoveReview, replyLine: readonly string[]): E
   const concepts = detectConcepts(review, replyLine);
   const main = concepts[0];
   const betterAlternative = review.bestMoveSan ? `${review.bestMoveSan}.` : undefined;
-  if (!main) return { title: label, category: 'positional', whatHappened: `Você jogou ${review.san}. ${evalText}`, ...(betterAlternative ? { betterAlternative } : {}), confidence: 'limited', concepts };
+  const afterAlternative = afterAlternativeOf(review);
+  const common = { ...(betterAlternative ? { betterAlternative } : {}), ...(afterAlternative ? { afterAlternative } : {}) };
+  if (!main) return { title: label, category: 'positional', kind: 'positional', whatHappened: `Você jogou ${review.san}. ${evalText}`, ...common, confidence: 'limited', concepts };
   const { fact, ...body } = TEMPLATES[main.theme](review, main);
-  const kind = main.category === 'positional' ? 'Erro posicional' : main.category === 'mate' ? 'Questão de mate' : 'Erro tático';
+  const kind = errorKindOf(main, isForcingMove(review.fenBefore, review.uci));
+  const threat = THREAT_IN_FACT.includes(main.theme) || (main.theme === 'allowed_mate' && main.evidence.mateThreatBefore) ? undefined : threatBefore(review);
+  // Proportional: an inaccuracy without a verified fact gets the facts only, not a lesson.
+  const brief = review.classification === 'inaccuracy' && !main.verified;
+  const sections = brief ? { why: body.why } : body;
   return {
     title: `${label} · ${THEME_LABEL[main.theme]}`,
     category: main.category,
-    whatHappened: `Você jogou ${review.san}. ${kind}: ${fact ?? (main.side === 'own' ? 'havia uma oportunidade tática que o lance não aproveitou.' : 'a melhor continuação do motor era diferente.')} ${evalText}`,
-    ...(betterAlternative ? { betterAlternative } : {}),
-    ...Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined)),
+    kind,
+    whatHappened: `Você jogou ${review.san}. ${ERROR_KIND_LABEL[kind]}: ${fact ?? (main.side === 'own' ? 'havia uma oportunidade tática que o lance não aproveitou.' : 'a melhor continuação do motor era diferente.')} ${evalText}`,
+    ...(threat ? { threat } : {}),
+    ...common,
+    ...Object.fromEntries(Object.entries(sections).filter(([, v]) => v !== undefined)),
     theme: main.theme,
-    skill: THEME_SKILL[main.theme],
+    skill: skillOf(main),
     confidence: main.verified ? 'verified' : 'limited',
     concepts,
   };

@@ -2,6 +2,7 @@ import type { Attempt, Exercise, SkillEvent } from '../types/domain';
 import { isPracticeRepeat, nextSrs, outcomeOf } from '../services/scheduling/srs';
 import { eventsFromAttempt } from '../services/adaptation/skills';
 import { getDb } from './database';
+import { fenKey } from '../services/analysis/gameAnalyzer';
 
 export async function listExercises(): Promise<Exercise[]> {
   return getDb().exercises.orderBy('createdAt').reverse().toArray();
@@ -11,10 +12,11 @@ export async function getExercise(id: string): Promise<Exercise | undefined> {
   return getDb().exercises.get(id);
 }
 
-/** Stores an exercise unless one already exists for the same position. */
+/** Stores an exercise unless one already exists for the same position (move counters ignored). */
 export async function addExercise(ex: Exercise): Promise<{ added: boolean; id: string }> {
   const db = getDb();
-  const dup = await db.exercises.filter((e) => e.fen === ex.fen).first();
+  const key = fenKey(ex.fen);
+  const dup = await db.exercises.filter((e) => fenKey(e.fen) === key).first();
   if (dup) return { added: false, id: dup.id };
   await db.exercises.add(ex);
   return { added: true, id: ex.id };

@@ -1,6 +1,6 @@
 import type { Attempt, Exercise, Game, GameAnalysis, MoveClass, OpeningAttempt, Theme } from '../../types/domain';
 import { matchOpening } from '../openings/library';
-import { errorThemes, type AnalyzedGameInput } from '../recommendations/recommend';
+import { errorThemes, type AnalyzedGameInput, type ErrorPattern } from '../recommendations/recommend';
 import { replyLinesOf } from '../analysis/gameAnalyzer';
 
 export function toAnalyzedInputs(games: readonly Game[], analyses: readonly GameAnalysis[]): AnalyzedGameInput[] {
@@ -70,8 +70,9 @@ export function errorDistribution(inputs: readonly AnalyzedGameInput[]): Record<
   return out;
 }
 
-export function themeCounts(inputs: readonly AnalyzedGameInput[]): { theme: Theme; count: number; refs: { gameId: string; ply: number; san: string }[] }[] {
-  return [...errorThemes(inputs).entries()].map(([theme, refs]) => ({ theme, count: refs.length, refs })).sort((a, b) => b.count - a.count);
+/** Recurring verified error patterns (theme + side), most frequent first. */
+export function themeCounts(inputs: readonly AnalyzedGameInput[]): (ErrorPattern & { count: number })[] {
+  return [...errorThemes(inputs).values()].map((p) => ({ ...p, count: p.refs.length })).sort((a, b) => b.count - a.count);
 }
 
 /** Exercise success per theme (independent rate), for "temas com melhor desempenho". */

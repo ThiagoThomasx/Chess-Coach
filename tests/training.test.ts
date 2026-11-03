@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, selectExercisePositions } from '../src/services/exercises/generate';
+import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, isSacrifice, selectExercisePositions } from '../src/services/exercises/generate';
 import { validateStep, judgeWithEngine, hintFor, hintForNode } from '../src/services/exercises/validate';
 import { nextSrs, outcomeOf, DAY_MS, RETRY_DELAY_MS } from '../src/services/scheduling/srs';
 import { applyUci, isValidFen, replayGame } from '../src/services/chess/position';
@@ -186,5 +186,35 @@ describe('first hint carries information (audit A5)', () => {
     const fen = '4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1';
     expect(hintForNode(fen, objective, [{ uci: 'd2d5', san: 'Rxd5' }], 2).square).toBe('d2');
     expect(hintForNode(fen, objective, [{ uci: 'd2d5', san: 'Rxd5' }], 3).text).toContain('Rxd5');
+  });
+});
+
+describe('Sprint 3: exercise quality', () => {
+  const objective = 'Encontre o melhor lance nesta posição.';
+
+  it('hint 1 agrees in gender and does not name a piece the solver has only one of', () => {
+    // A single queen: naming it would point at the piece exactly like hint 2.
+    const lone = hintForNode('4k3/8/8/8/8/8/8/3QK3 w - - 0 1', objective, [{ uci: 'd1d7', san: 'Qd7+' }], 1).text;
+    const quietQueen = hintForNode('k7/8/8/8/8/8/8/3QK3 w - - 0 1', objective, [{ uci: 'd1d2', san: 'Qd2' }], 1).text;
+    expect(lone).not.toMatch(/de a dama|da dama/);
+    expect(quietQueen).not.toMatch(/dama/);
+    const rooks = hintForNode('1k6/8/8/8/8/8/8/R3K2R w KQ - 0 1', objective, [{ uci: 'h1h2', san: 'Rh2' }], 1).text;
+    expect(rooks).toMatch(/de uma torre/);
+  });
+
+  it('the same position reached at another move number is not a new exercise', () => {
+    const review = reviewMove(nd4, before, { ...before, fen: nd4.fenAfter, lines: [{ multipv: 1, depth: 16, score: cp(-300), pv: ['f3e5'] }] })!;
+    const otherCounters = review.fenBefore.replace(/ \d+ \d+$/, ' 0 17');
+    expect(selectExercisePositions(game, [review], [null, null, null, null, before], { max: 5, existingFens: new Set([otherCounters]) })).toHaveLength(0);
+    // And a repeated position inside one game yields a single exercise.
+    expect(selectExercisePositions(game, [review, { ...review, ply: 9 }], [null, null, null, null, before, null, null, null, before], { max: 5 })).toHaveLength(1);
+  });
+
+  it('a sacrifice is rated harder than the same pattern without giving material', () => {
+    // Qh6+!! Kxh6 then Bxf6#: the queen is given away with check.
+    const fen = 'r1bq2r1/b4pk1/p1pp1p2/1p2pP2/1P2P1PB/3P4/1PPQ2P1/R3K2R w - - 0 1';
+    expect(isSacrifice(fen, 'd2h6')).toBe(true);
+    expect(isSacrifice('4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1', 'd2d5')).toBe(false);
+    expect(estimateDifficulty(fen, ['d2h6', 'g7h6', 'h4f6'], 'missed_mate', 1)).toBeGreaterThanOrEqual(4);
   });
 });

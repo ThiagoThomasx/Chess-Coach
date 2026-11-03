@@ -38,7 +38,7 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
   const attempts = useLiveQuery(() => getDb().attempts.where('exerciseId').equals(ex.id).sortBy('at'), [ex.id], []);
   const nextDue = useLiveQuery(async () => (await getDb().exercises.where('srs.dueAt').belowOrEqual(Date.now()).toArray()).filter((e) => e.id !== ex.id).sort((a, b) => a.srs.dueAt - b.srs.dueAt)[0]?.id, [ex.id, s.nextDue]);
   const orientation = ex.sideToMove === 'w' ? 'white' : 'black';
-  const done = s.status === 'solved' || s.status === 'failed' || s.status === 'revealed';
+  const done = s.status === 'solved' || s.status === 'failed' || s.status === 'revealed' || s.status === 'uncertain';
   const highlights = s.hintSquare ? { [s.hintSquare]: { boxShadow: 'inset 0 0 0 4px rgba(217,178,106,0.95)' } } : {};
 
   return (

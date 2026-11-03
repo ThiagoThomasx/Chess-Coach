@@ -360,3 +360,24 @@
 .mini-board b[data-color='b'] {
   color: #1b1b1b;
 }
+
+/* Dashboard: competences grouped by state */
+.skill-states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.9rem;
+  margin-top: 0.75rem;
+}
+.skill-state {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-2, transparent);
+}
+.skill-state ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}

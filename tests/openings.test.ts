@@ -113,3 +113,17 @@ describe('opening practice transpositions (audit M3)', () => {
     expect((await judgeOffBook(engineWith(30, -300), fen, 'g1f3', 5)).playable).toBe(false);
   });
 });
+
+describe('opening identification by position (Sprint 3)', () => {
+  it('recognizes a transposition into a library line', () => {
+    // 1.d4 Nf6 2.Bf4 d5 3.e3 e6 reaches the London main line by another move order.
+    const m = matchOpening(['d4', 'Nf6', 'Bf4', 'd5', 'e3', 'e6', 'Nf3']);
+    expect(m?.opening.id).toBe('london');
+    expect(m?.depth).toBeGreaterThanOrEqual(7);
+  });
+
+  it('still requires the defining position', () => {
+    expect(matchOpening(['e4', 'e5', 'Nf3', 'Nc6', 'd4'])).toBeNull();
+    expect(matchOpening(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Nd4'])?.lineId).toBe('main');
+  });
+});

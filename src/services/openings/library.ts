@@ -1,3 +1,4 @@
+import { Chess } from 'chess.js';
 import type { Opening } from '../../types/domain';
 
 /**
@@ -109,7 +110,12 @@ export const OPENINGS: readonly Opening[] = [
     side: 'b',
     definingPly: 2, // 1…d5
     mainLine: { id: 'main', name: 'Linha com ...Qa5', moves: ['e4', 'd5', 'exd5', 'Qxd5', 'Nc3', 'Qa5', 'd4', 'Nf6', 'Nf3', 'c6'] },
-    variations: [{ id: 'qd6', name: 'Linha com ...Qd6', moves: ['e4', 'd5', 'exd5', 'Qxd5', 'Nc3', 'Qd6', 'd4', 'Nf6', 'Nf3', 'a6'] }],
+    variations: [{
+        id: 'qd6',
+        name: 'Linha com ...Qd6',
+        moves: ['e4', 'd5', 'exd5', 'Qxd5', 'Nc3', 'Qd6', 'd4', 'Nf6', 'Nf3', 'a6'],
+        comment: 'Jogável, mas o motor do ChessQuest avalia a posição final com vantagem perceptível das brancas (cerca de um peão em profundidade 16): a ideia é um jogo simples, com ...a6 preparando ...b5 e ...Bb7, não a igualdade imediata.',
+      }],
     goals: ['Eliminar o peão e4 imediatamente', 'Recolocar a dama em casa segura após Nc3', 'Desenvolvimento simples com ...c6, ...Bf5 ou ...Bg4'],
     tacticalIdeas: ['Com a dama em a5, ...Bb4 crava o cavalo de c3, e a dama aumenta a pressão sobre ele', '...c6 cria uma casa de retirada para a dama em c7'],
     commonMistakes: ['Deixar a dama no centro, onde é atacada com ganho de tempo', 'Atrasar o desenvolvimento do flanco do rei'],
@@ -123,19 +129,50 @@ export function findOpening(id: string, extra: readonly Opening[] = []): Opening
 /** Plies a game must follow before an opening is named, unless the opening sets its own. */
 export const DEFAULT_DEFINING_PLY = 4;
 
+/** Position keys (FEN without move counters) after each ply; stops at the first illegal move. */
+function positionKeys(moves: readonly string[]): string[] {
+  const chess = new Chess();
+  const keys = [key(chess.fen())];
+  for (const san of moves) {
+    try {
+      chess.move(san);
+    } catch {
+      break;
+    }
+    keys.push(key(chess.fen()));
+  }
+  return keys;
+}
+
+const key = (fen: string): string => fen.split(' ').slice(0, 4).join(' ');
+const lineKeys = new Map<string, string[]>();
+function keysOfLine(moves: readonly string[]): string[] {
+  const id = moves.join(' ');
+  const cached = lineKeys.get(id);
+  if (cached) return cached;
+  const keys = positionKeys(moves);
+  lineKeys.set(id, keys);
+  return keys;
+}
+
 /**
- * Longest library line that is a prefix of the game's moves (for "abertura
- * identificada"). The game must reach the opening's defining move: 1.e4 e5
- * 2.Nf3 Nc6 3.d4 is not named after an opening that needs 3.Bc4 or 3.Bb5.
+ * Deepest library line position reached by the game (for "abertura
+ * identificada"), compared by position so that transpositions count
+ * (1.d4 Nf6 2.Bf4 d5 is the London). The game must reach the opening's
+ * defining position: 1.e4 e5 2.Nf3 Nc6 3.d4 is not named after an opening
+ * that needs 3.Bc4 or 3.Bb5.
  */
 export function matchOpening(moves: readonly string[], extra: readonly Opening[] = []): { opening: Opening; lineId: string; depth: number } | null {
+  const lines = [...OPENINGS, ...extra].flatMap((o) => [o.mainLine, ...o.variations].map((line) => ({ o, line })));
+  const longest = Math.max(0, ...lines.map((l) => l.line.moves.length));
+  // A transposition reaches the same position at the same ply count, give or take a few tempo-neutral orders.
+  const game = new Set(positionKeys(moves.slice(0, longest + 4)));
   let best: { opening: Opening; lineId: string; depth: number } | null = null;
-  for (const o of [...OPENINGS, ...extra]) {
-    for (const line of [o.mainLine, ...o.variations]) {
-      let d = 0;
-      while (d < line.moves.length && d < moves.length && line.moves[d] === moves[d]) d++;
-      if (d >= (o.definingPly ?? DEFAULT_DEFINING_PLY) && (!best || d > best.depth)) best = { opening: o, lineId: line.id, depth: d };
-    }
+  for (const { o, line } of lines) {
+    const keys = keysOfLine(line.moves);
+    let d = keys.length - 1;
+    while (d > 0 && !game.has(keys[d] as string)) d--;
+    if (d >= (o.definingPly ?? DEFAULT_DEFINING_PLY) && (!best || d > best.depth)) best = { opening: o, lineId: line.id, depth: d };
   }
   return best;
 }
