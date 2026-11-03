@@ -1,0 +1,155 @@
+import { Chess } from 'chess.js';
+import type { AcceptableMove, ClassificationThresholds, EngineLine, Exercise, Game, MoveReview, PositionAnalysis, Theme } from '../../types/domain';
+import { legalMoveCount, parseUci, uciToSan } from '../chess/position';
+import { winPercentFor } from '../analysis/evaluation';
+import { DEFAULT_THRESHOLDS } from '../analysis/classify';
+import { detectConcepts, THEME_SKILL } from '../pedagogy/concepts';
+import { newId } from '../../utils/hash';
+
+export const DEFAULT_TOLERANCE = 5; // win% points
+
+export interface CandidateCheck {
+  ok: boolean;
+  reasons: string[];
+}
+
+const TACTICAL: readonly Theme[] = ['missed_mate', 'missed_capture', 'fork', 'missed_check'];
+
+/** Minimum quality criteria a position must pass to become an exercise. */
+export function checkCandidate(review: MoveReview, before: PositionAnalysis | null, thresholds: ClassificationThresholds = DEFAULT_THRESHOLDS): CandidateCheck {
+  const reasons: string[] = [];
+  if (!before || before.lines.length === 0) reasons.push('Posição sem análise do motor');
+  else {
+    if (!before.complete) reasons.push('Análise da posição incompleta');
+    if (before.depth < thresholds.minDepth) reasons.push(`Profundidade insuficiente (${before.depth})`);
+  }
+  if (review.classification === 'inconclusive') reasons.push('Classificação inconclusiva');
+  const relevant =
+    review.classification === 'mistake' ||
+    review.classification === 'blunder' ||
+    (review.classification === 'inaccuracy' && (review.flags.includes('mate_missed') || review.flags.includes('missed_tactic')));
+  if (!relevant) reasons.push('Lance sem erro relevante');
+  if (legalMoveCount(review.fenBefore) < 2) reasons.push('Apenas um lance legal');
+  return { ok: reasons.length === 0, reasons };
+}
+
+export function acceptableMovesFrom(before: PositionAnalysis, tolerance: number): AcceptableMove[] {
+  const stm = before.fen.split(' ')[1] === 'b' ? 'b' : 'w';
+  const best = before.lines[0];
+  if (!best) return [];
+  const bestWin = winPercentFor(best.score, stm);
+  return before.lines
+    .filter((l) => l.pv[0] && bestWin - winPercentFor(l.score, stm) <= tolerance)
+    .map((l) => ({ uci: l.pv[0] as string, san: uciToSan(before.fen, l.pv[0] as string) ?? (l.pv[0] as string), score: l.score }));
+}
+
+/** Estimated difficulty 1–5 from verifiable features of the solution. */
+export function estimateDifficulty(fen: string, solution: readonly string[], theme: Theme, alternatives: number): number {
+  const first = solution[0];
+  if (!first) return 1;
+  const chess = new Chess(fen);
+  const { to } = parseUci(first);
+  const isCapture = !!chess.get(to);
+  chess.move(parseUci(first));
+  const isCheck = chess.inCheck();
+  let d = 2;
+  if (!isCapture && !isCheck) d += 1; // quiet moves are harder to find
+  const userMoves = Math.ceil(solution.length / 2);
+  if (userMoves >= 3) d += 1;
+  if (userMoves >= 2 && theme !== 'missed_capture') d += 0.5;
+  if (theme === 'missed_capture' && userMoves === 1) d -= 1;
+  if (alternatives > 1) d -= 0.5;
+  return Math.max(1, Math.min(5, Math.round(d)));
+}
+
+function objectiveFor(theme: Theme, mateIn?: number): string {
+  switch (theme) {
+    case 'missed_mate':
+      return mateIn ? `Encontre o mate em ${mateIn}.` : 'Encontre o mate forçado.';
+    case 'missed_capture':
+    case 'fork':
+    case 'missed_check':
+      return 'Encontre o lance que ganha material.';
+    case 'allowed_mate':
+    case 'mate_threat':
+    case 'defense':
+      return 'Encontre a defesa necessária: evite a ameaça do adversário.';
+    case 'hanging_piece':
+    case 'ignored_threat':
+    case 'removed_defender':
+      return 'Encontre um lance seguro que não deixe material desprotegido.';
+    default:
+      return 'Encontre o melhor lance nesta posição.';
+  }
+}
+
+/** Solution line validated move by move: forcing lines keep up to 3 user moves; others only the first. */
+function solutionLineFor(best: EngineLine, theme: Theme): string[] {
+  if (best.score.kind === 'mate') {
+    const n = Math.ceil(Math.abs(best.score.value));
+    if (n <= 3) return best.pv.slice(0, 2 * n - 1);
+  }
+  if (TACTICAL.includes(theme)) return best.pv.slice(0, Math.min(best.pv.length, 3));
+  return best.pv.slice(0, 1);
+}
+
+export interface BuildExerciseInput {
+  game: Game;
+  review: MoveReview;
+  before: PositionAnalysis;
+  replyLine: readonly string[];
+  tolerance?: number;
+  now?: number;
+}
+
+export function buildExercise({ game, review, before, replyLine, tolerance = DEFAULT_TOLERANCE, now = Date.now() }: BuildExerciseInput): Exercise | null {
+  const best = before.lines[0];
+  if (!best || !best.pv[0]) return null;
+  const concepts = detectConcepts(review, replyLine);
+  // From the solver's view, an error that lost material becomes "find the safe move".
+  const theme: Theme = concepts[0]?.theme ?? 'positional';
+  const acceptable = acceptableMovesFrom(before, tolerance);
+  const bestMove = acceptable[0];
+  if (!bestMove) return null;
+  // Reject positions where the played (wrong) move would itself be accepted.
+  if (acceptable.some((a) => a.uci === review.uci)) return null;
+  const solutionLine = solutionLineFor(best, theme);
+  const mateIn = best.score.kind === 'mate' ? Math.ceil(Math.abs(best.score.value)) : undefined;
+  return {
+    id: newId(),
+    fen: review.fenBefore,
+    source: 'game',
+    gameId: game.id,
+    ply: review.ply,
+    sideToMove: review.color,
+    objective: objectiveFor(theme, mateIn),
+    theme,
+    skill: THEME_SKILL[theme],
+    bestMove,
+    acceptableMoves: acceptable,
+    solutionLine,
+    referenceLines: before.lines,
+    difficulty: estimateDifficulty(review.fenBefore, solutionLine, theme, acceptable.length),
+    ambiguous: acceptable.length > 1 || before.lines.length < 2,
+    tolerance,
+    createdAt: now,
+    srs: { box: 0, dueAt: now },
+    analysisDepth: before.depth,
+  };
+}
+
+/** Picks the most instructive positions of a game, capped at `max`, ranked by win% loss. */
+export function selectExercisePositions(
+  game: Game,
+  reviews: readonly MoveReview[],
+  positions: readonly (PositionAnalysis | null)[],
+  opts: { max: number; thresholds?: ClassificationThresholds; existingFens?: Set<string> },
+): MoveReview[] {
+  const seen = opts.existingFens ?? new Set<string>();
+  return reviews
+    .filter((r) => game.userColor === undefined || r.color === game.userColor)
+    .filter((r) => checkCandidate(r, positions[r.ply - 1] ?? null, opts.thresholds).ok)
+    .filter((r) => !seen.has(r.fenBefore))
+    .sort((a, b) => b.winLoss - a.winLoss)
+    .slice(0, opts.max);
+}

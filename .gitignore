@@ -1,0 +1,8 @@
+node_modules
+dist
+public/engine/*.js
+public/engine/*.wasm
+test-results
+playwright-report
+coverage
+*.tsbuildinfo

@@ -1,0 +1,203 @@
+/* ---------- App shell ---------- */
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  min-height: 100%;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: 1.25rem 0.85rem;
+  background: var(--bg-sunken);
+  border-right: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  color: var(--text);
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.nav {
+  display: grid;
+  gap: 2px;
+}
+
+.nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-decoration: none;
+  position: relative;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.nav a:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.nav a.active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.nav a.active::before {
+  content: '';
+  position: absolute;
+  left: -0.85rem;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.nav .count {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.sidebar-foot {
+  margin-top: auto;
+  display: grid;
+  gap: 0.5rem;
+  padding: 0 0.5rem;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.engine-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  margin-right: 0.4rem;
+}
+
+.engine-dot[data-state='ready'] {
+  background: var(--good);
+}
+
+.engine-dot[data-state='initializing'] {
+  background: var(--warn);
+}
+
+.engine-dot[data-state='error'] {
+  background: var(--bad);
+}
+
+.main {
+  min-width: 0;
+  padding: 1.75rem clamp(1rem, 2.5vw, 2.5rem) 3rem;
+}
+
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.page-head p {
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+  max-width: 62ch;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    position: sticky;
+    z-index: 20;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    overflow-x: auto;
+  }
+
+  .brand span,
+  .sidebar-foot {
+    display: none;
+  }
+
+  .nav {
+    display: flex;
+  }
+
+  .nav a span.label {
+    display: none;
+  }
+
+  .nav a.active::before {
+    display: none;
+  }
+
+  .grid-2,
+  .grid-3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .main {
+    padding-top: 1rem;
+  }
+}

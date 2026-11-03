@@ -1,0 +1,79 @@
+/* Design tokens. Dark graphite is the default; a light "paper" theme is opt-in. */
+:root {
+  --bg: #15161a;
+  --bg-sunken: #101114;
+  --surface: #1d1f24;
+  --surface-2: #24272d;
+  --surface-3: #2d3038;
+  --border: #30333b;
+  --border-strong: #41454f;
+  --text: #e8e6e1;
+  --text-muted: #a3a29c;
+  --text-faint: #6f6f6b;
+
+  --accent: #d9b26a; /* brass — brand & primary actions */
+  --accent-ink: #1a160d;
+  --info: #7aa7e6; /* selection, information */
+  --good: #74b77f;
+  --best: #4fae8f;
+  --warn: #e0b04c; /* inaccuracy */
+  --mistake: #e28a3e;
+  --bad: #e2635a; /* blunder */
+  --inconclusive: #8d8f99;
+
+  --good-bg: color-mix(in oklab, var(--good) 14%, transparent);
+  --warn-bg: color-mix(in oklab, var(--warn) 14%, transparent);
+  --bad-bg: color-mix(in oklab, var(--bad) 14%, transparent);
+  --info-bg: color-mix(in oklab, var(--info) 14%, transparent);
+
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', ui-monospace, Consolas, 'SF Mono', monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: clamp(1.75rem, 1.3rem + 1.4vw, 2.4rem);
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px -12px rgb(0 0 0 / 0.6);
+
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  --sidebar-w: 220px;
+}
+
+:root[data-theme='light'] {
+  --bg: #f3f0ea;
+  --bg-sunken: #e9e5dc;
+  --surface: #fbfaf7;
+  --surface-2: #f1eee7;
+  --surface-3: #e6e1d6;
+  --border: #ddd7ca;
+  --border-strong: #c7bfae;
+  --text: #22201c;
+  --text-muted: #5f5b52;
+  --text-faint: #8f897c;
+  --accent: #9a6b1f;
+  --accent-ink: #fffaf0;
+  --info: #2f64b5;
+  --good: #2f7d43;
+  --best: #1f7a5e;
+  --warn: #a8740b;
+  --mistake: #b75a12;
+  --bad: #b8352c;
+  --shadow: 0 8px 24px -14px rgb(60 40 10 / 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+  }
+}
