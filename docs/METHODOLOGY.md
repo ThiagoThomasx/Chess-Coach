@@ -108,7 +108,7 @@ Critérios mínimos (`checkCandidate`): análise completa, profundidade ≥ mín
 
 | Tipo | Quando | Lances do usuário |
 |---|---|---|
-| Mate | A melhor linha é mate forçado para quem joga | N do "mate em N" (máx. 4) |
+| Mate | A melhor linha é mate forçado para quem joga | N do "mate em N" (máx. 4; com N > 4, o aluno joga 4 lances que mantêm o mate em N forçado) |
 | Sequência | A melhor linha ganha ≥ 2 pontos em ponto estável | ⌈meias-jogadas até estabilizar / 2⌉, de 1 a 3 |
 | Defesa | Tema defensivo (mate permitido, peça desprotegida, ameaça, cravada…) | 1 |
 | Conversão | Sem ganho material, posição vencedora (≥ 80%) | 2 |
@@ -116,7 +116,7 @@ Critérios mínimos (`checkCandidate`): análise completa, profundidade ≥ mín
 
 ### 5.3 Árvore de solução (`buildSolutionTree`)
 
-Construída com o motor ao criar o exercício: em cada posição do usuário, busca MultiPV (≥ 3) → **lances aceitos** = todos dentro da tolerância (padrão 5 p.p.) do melhor. Em metas de mate, só são aceitos lances que mantêm mate forçado **dentro dos lances restantes** (a expectativa de vitória não distingue mate em 2 de mate em 5). Na raiz, até 2 lances aceitos são expandidos; abaixo dela, o principal. Cada lance expandido recebe até 2 **respostas equivalentes do adversário** (dentro da tolerância, do ponto de vista dele), recursivamente até o limite de lances.
+Construída com o motor ao criar o exercício: em cada posição do usuário, busca MultiPV (≥ 3) → **lances aceitos** = todos dentro da tolerância (padrão 5 p.p.) do melhor. Em metas de mate, só são aceitos lances que mantêm mate forçado **dentro do orçamento de mate** (N do mate em N menos os lances já jogados; a expectativa de vitória não distingue mate em 2 de mate em 5). Uma árvore nunca fica com a raiz vazia: se nenhum lance passar no filtro, a raiz usa os lances aceitos da análise da partida. Na raiz, até 2 lances aceitos são expandidos; abaixo dela, o principal. Cada lance expandido recebe até 2 **respostas equivalentes do adversário** (dentro da tolerância, do ponto de vista dele), recursivamente até o limite de lances.
 
 ### 5.4 Validação (`playSolverMove`)
 
@@ -128,6 +128,10 @@ Construída com o motor ao criar o exercício: em cada posição do usuário, bu
 6. Limite rígido: 4 lances do usuário por exercício.
 
 O registro de tentativa distingue: resolvido sem ajuda, com dicas (cada dica conta; repetir depois de errar na mesma sessão conta como uma dica) e solução consultada.
+
+Dicas progressivas: 1 = o tipo de lance (mate imediato, xeque, captura, ataque duplo ou lance tranquilo de uma peça), calculado da posição; 2 = a casa da peça a mover; 3 = o lance.
+
+**Repetição de prática**: uma tentativa feita menos de 10 minutos depois da tentativa anterior do mesmo exercício (por exemplo, "Resolver de novo" logo após ver a dica 3 ou a solução) não é registrada: não muda a repetição espaçada nem gera evidência de competência.
 
 Dificuldade (1–5): base 2; +1 se o primeiro lance é tranquilo (sem captura/xeque); +1 se exige ≥ 3 lances; +0,5 se exige 2 lances (exceto capturas); −1 para captura simples; −0,5 se há várias soluções.
 

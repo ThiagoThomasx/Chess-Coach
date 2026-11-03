@@ -8,7 +8,7 @@ import { analyzeGame, reviewMove } from '../src/services/analysis/gameAnalyzer';
 import { replayGame, uciToSan } from '../src/services/chess/position';
 import { detectConcepts } from '../src/services/pedagogy/concepts';
 import { DEFAULT_THRESHOLDS } from '../src/services/analysis/classify';
-import { buildSolutionTree, playSolverMove } from '../src/services/exercises/sequence';
+import { buildSolutionTree, goalFor, playSolverMove } from '../src/services/exercises/sequence';
 import type { Exercise, ExerciseGoal } from '../src/types/domain';
 import { parsePgnText } from '../src/services/pgn/parsePgn';
 import { SHORT_BLUNDER_GAME } from './fixtures';
@@ -142,6 +142,20 @@ describe('sequence exercises with the real engine', () => {
       expect(v2.kind).toBe('solved');
     }
   }, 120_000);
+
+  it('builds a solvable tree for a mate longer than the move limit (audit C1)', async () => {
+    const fen = '8/8/8/3k4/8/8/8/K5Q1 w - - 0 1';
+    const probe = await engine.analyze({ fen, depth: 18 });
+    const best = probe.lines[0]!;
+    expect(best.score.kind).toBe('mate');
+    const long = goalFor(fen, best, 'missed_mate', 5);
+    expect(long.mateIn).toBeGreaterThan(4);
+    const tree = await buildSolutionTree(engine, fen, long, opts);
+    expect(tree.accepted.length).toBeGreaterThanOrEqual(1);
+    const ex = { id: 'm', fen, sideToMove: 'w', tolerance: 5, goal: long, tree, kind: 'mate' } as unknown as Exercise & { goal: ExerciseGoal };
+    const v = await playSolverMove(ex, { node: tree, userMoves: 0, fen }, tree.accepted[0]!.uci, { engine, depth: 14, tolerance: 5, choose: () => 0 });
+    expect(['continue', 'solved']).toContain(v.kind);
+  }, 240_000);
 
   it('judges a move outside the stored lines with a fresh search', async () => {
     const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';

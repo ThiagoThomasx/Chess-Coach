@@ -34,6 +34,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
   const [moves, setMoves] = useState<string[]>([]);
   const [nextDue, setNextDue] = useState<number | null>(null);
   const [retries, setRetries] = useState(0);
+  const [practice, setPractice] = useState(false);
   const startedAt = useRef(Date.now());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -46,12 +47,13 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
 
   const finish = async (correct: boolean, revealed: boolean, played: string[]) => {
     // A retry after a failure in the same session counts as assistance.
-    const updated = await recordAttempt(
+    const recorded = await recordAttempt(
       raw,
       { exerciseId: raw.id, at: Date.now(), correct, hintsUsed: hints + retries, revealed, timeMs: Date.now() - startedAt.current, moves: played },
       settings.srsIntervalsDays,
     );
-    setNextDue(updated.srs.dueAt);
+    setPractice(recorded.practice);
+    setNextDue(recorded.practice ? null : recorded.exercise.srs.dueAt);
   };
 
   const onMove = (uci: string): boolean => {
@@ -105,7 +107,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
   const hint = () => {
     if (status !== 'playing' || hints >= MAX_HINTS) return;
     const level = hints + 1;
-    const h = hintForNode(ex.objective, solve.node.accepted, level);
+    const h = hintForNode(solve.fen, ex.objective, solve.node.accepted, level);
     setHints(level);
     setHintSquare(h.square ?? null);
     setFeedback({ kind: 'info', text: h.text });
@@ -145,6 +147,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     setLastMove(null);
     setMoves([]);
     setNextDue(null);
+    setPractice(false);
     startedAt.current = Date.now();
   };
 
@@ -156,6 +159,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     feedback,
     lastMove,
     nextDue,
+    practice,
     onMove,
     hint,
     reveal,

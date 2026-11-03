@@ -82,9 +82,12 @@ export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme
  */
 export async function buildSolutionTree(engine: EngineLike, fen: string, goal: ExerciseGoal, opts: TreeOptions): Promise<SolutionNode> {
   const isMate = goal.kind === 'mate';
-  const node = async (pos: string, movesLeft: number, isRoot: boolean): Promise<SolutionNode> => {
+  const limit = Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES);
+  // Mate budget can exceed the move limit (mate in 6 is played for 4 moves).
+  const firstBudget = mateBudget(goal, 0);
+  const node = async (pos: string, movesLeft: number, budget: number, isRoot: boolean): Promise<SolutionNode> => {
     const a = await engine.analyze({ fen: pos, depth: opts.depth, multiPv: opts.multiPv });
-    const accepted = acceptedFrom(a, opts.tolerance, isMate ? movesLeft : undefined);
+    const accepted = acceptedFrom(a, opts.tolerance, isMate ? budget : undefined);
     const out: SolutionNode = { fen: pos, accepted, replies: {}, depth: a.depth };
     if (movesLeft <= 1) return out;
     for (const move of accepted.slice(0, isRoot ? MAX_ROOT_EXPANSIONS : 1)) {
@@ -98,13 +101,18 @@ export async function buildSolutionTree(engine: EngineLike, fen: string, goal: E
       for (const r of acceptedFrom(opp, opts.tolerance).slice(0, MAX_REPLY_BRANCHES)) {
         const next = applyUci(afterUser, r.uci);
         if (!next) continue;
-        branches.push({ uci: r.uci, san: r.san, score: r.score, next: terminalScore(next) ? null : await node(next, movesLeft - 1, false) });
+        branches.push({ uci: r.uci, san: r.san, score: r.score, next: terminalScore(next) ? null : await node(next, movesLeft - 1, budget - 1, false) });
       }
       out.replies[move.uci] = branches;
     }
     return out;
   };
-  return node(fen, Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES), true);
+  return node(fen, limit, firstBudget, true);
+}
+
+/** Solver moves within which a mate goal must still force mate, after `userMoves` moves. */
+export function mateBudget(goal: ExerciseGoal, userMoves: number): number {
+  return (goal.mateIn ?? Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES)) - userMoves;
 }
 
 /** Converts a pre-v2 exercise (single line) into the tree representation. */
@@ -134,7 +142,10 @@ export function normalizeExercise(ex: Exercise): Exercise & { kind: ExerciseKind
     maxUserMoves: userMoves,
     targetWin: winPercentFor(ex.bestMove.score, ex.sideToMove),
   };
-  return { ...ex, kind: ex.kind ?? goal.kind, goal, tree: ex.tree ?? legacyTree(ex) };
+  const tree = ex.tree ?? legacyTree(ex);
+  // Trees stored before the mate-budget fix can have an empty root (mate in 5+).
+  const safeTree = tree.accepted.length || !ex.acceptableMoves.length ? tree : { ...tree, accepted: ex.acceptableMoves };
+  return { ...ex, kind: ex.kind ?? goal.kind, goal, tree: safeTree };
 }
 
 // ---------------------------------------------------------------------------
@@ -165,19 +176,33 @@ export interface SolveDeps {
 
 const randomPick = (n: number) => Math.floor(Math.random() * n);
 
+/** Win% of the best move in the current position: stored, or searched when the node has none. */
+async function referenceWin(state: SolveState, solver: Color, deps: SolveDeps): Promise<number | null> {
+  const stored = state.node.accepted[0];
+  if (stored) return winPercentFor(stored.score, solver);
+  if (!deps.engine) return null;
+  try {
+    const r = await deps.engine.analyze({ fen: state.fen, depth: deps.depth, multiPv: 1 });
+    const line = r.lines[0];
+    return line && r.complete ? winPercentFor(line.score, solver) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Win% for the solver after its move, from the stored node or a fresh search. */
 async function judge(state: SolveState, uci: string, after: string, solver: Color, deps: SolveDeps): Promise<{ ok: true; score: Score } | { ok: false; verdict: MoveVerdict }> {
   const known = state.node.accepted.find((m) => m.uci === uci);
   if (known) return { ok: true, score: known.score };
-  const bestRef = state.node.accepted[0];
   const san = uciToSan(state.fen, uci) ?? uci;
   const term = terminalScore(after);
-  const bestWin = bestRef ? winPercentFor(bestRef.score, solver) : null;
+  const bestWin = await referenceWin(state, solver, deps);
   if (term && bestWin !== null) {
     const loss = bestWin - winPercentFor(term, solver);
     return loss <= deps.tolerance ? { ok: true, score: term } : { ok: false, verdict: { kind: 'rejected', message: `${san} termina a partida sem atingir o objetivo.`, winLoss: loss } };
   }
-  if (!deps.engine || bestWin === null) return { ok: false, verdict: { kind: 'unverifiable', message: `${san} não está entre os lances calculados e o motor não está disponível para verificá-lo.` } };
+  if (!deps.engine) return { ok: false, verdict: { kind: 'unverifiable', message: `${san} não está entre os lances calculados e o motor não está disponível para verificá-lo.` } };
+  if (bestWin === null) return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível calcular a referência desta posição para verificar ${san}; tente novamente.` } };
   let r: PositionAnalysis;
   try {
     r = await deps.engine.analyze({ fen: after, depth: deps.depth, multiPv: 1 });
@@ -208,14 +233,15 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
   if (terminalState(after) === 'checkmate') return { kind: 'solved', message: `${san} — xeque-mate!`, fen: after };
 
   const limit = Math.min(ex.goal.maxUserMoves, MAX_SEQUENCE_MOVES);
-  const judgeDeps = ex.goal.kind === 'mate' ? { ...deps, mateMovesLeft: limit - state.userMoves } : deps;
+  const isMate = ex.goal.kind === 'mate';
+  const judgeDeps = isMate ? { ...deps, mateMovesLeft: mateBudget(ex.goal, state.userMoves) } : deps;
   const verdict = await judge(state, uci, after, solver, judgeDeps);
   if (!verdict.ok) return verdict.verdict;
   const userMoves = state.userMoves + 1;
   const isMain = state.node.accepted[0]?.uci === uci;
   const altNote = isMain ? '' : ' (alternativa equivalente aceita)';
   if (userMoves >= limit) {
-    const done = ex.goal.kind === 'mate' ? `${san}${altNote}: o mate continua forçado dentro do limite do exercício.` : `${san}${altNote} — correto!`;
+    const done = isMate ? `${san}${altNote}: o mate continua forçado dentro do limite do exercício.` : `${san}${altNote} — correto!`;
     return { kind: 'solved', message: done, fen: after };
   }
 
@@ -238,7 +264,7 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
     const afterReply = applyUci(after, pick.uci) as string;
     if (terminalScore(afterReply)) return { kind: 'solved', message: `${san}${altNote} — correto!`, fen: afterReply };
     const next = await deps.engine.analyze({ fen: afterReply, depth: deps.depth, multiPv: 3 });
-    const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, ex.goal.kind === 'mate' ? limit - userMoves : undefined), replies: {}, depth: next.depth };
+    const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, isMate ? mateBudget(ex.goal, userMoves) : undefined), replies: {}, depth: next.depth };
     return { kind: 'continue', message: `${san}${altNote} — correto. O adversário responde ${pick.san}.`, reply: { uci: pick.uci, san: pick.san }, state: { node, userMoves, fen: afterReply } };
   } catch {
     return { kind: 'solved', message: `${san}${altNote} — aceito. Não foi possível calcular a resposta do adversário agora.`, fen: after };

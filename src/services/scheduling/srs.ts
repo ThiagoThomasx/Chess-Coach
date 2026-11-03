@@ -5,6 +5,17 @@ export const DAY_MS = 86_400_000;
 /** A failed item comes back in the same session after this delay. */
 export const RETRY_DELAY_MS = 10 * 60_000;
 
+/**
+ * A new attempt this soon after the previous one on the same exercise is
+ * practice: the answer is still in short-term memory (or was just shown), so
+ * it neither reschedules the exercise nor counts as skill evidence.
+ */
+export const PRACTICE_WINDOW_MS = RETRY_DELAY_MS;
+
+export function isPracticeRepeat(previousAttemptAt: number | undefined, now: number): boolean {
+  return previousAttemptAt !== undefined && now - previousAttemptAt < PRACTICE_WINDOW_MS;
+}
+
 export type ReviewOutcome = 'fail' | 'assisted' | 'independent';
 
 /**

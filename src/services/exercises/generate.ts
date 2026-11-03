@@ -157,7 +157,8 @@ export function selectExercisePositions(
 }
 
 const OBJECTIVE_BY_KIND = {
-  mate: (n?: number) => (n ? `Encontre o mate em ${n}.` : 'Encontre o mate forçado.'),
+  mate: (n: number | undefined, moves: number) =>
+    !n ? 'Encontre o mate forçado.' : n > moves ? `Há mate em ${n}: jogue os próximos ${moves} lances mantendo o mate forçado.` : `Encontre o mate em ${n}.`,
   sequence: (n: number) => `Encontre a sequência que ganha material (até ${n} lances seus; o adversário responde).`,
   conversion: (n: number) => `Mantenha a vantagem decisiva pelos próximos ${n} lances.`,
   defense: () => 'Encontre a defesa: não deixe material ou o rei desprotegidos.',
@@ -172,11 +173,13 @@ export async function withSolutionTree(ex: Exercise, engine: EngineLike, opts: T
   const best = ex.referenceLines[0];
   if (!best) return ex;
   const goal = goalFor(ex.fen, best, ex.theme, opts.tolerance);
-  const tree = await buildSolutionTree(engine, ex.fen, goal, opts);
-  const accepted = tree.accepted.length ? tree.accepted : ex.acceptableMoves;
+  const built = await buildSolutionTree(engine, ex.fen, goal, opts);
+  const accepted = built.accepted.length ? built.accepted : ex.acceptableMoves;
+  // A tree with an empty root cannot be solved; fall back to the review's accepted moves.
+  const tree = built.accepted.length ? built : { ...built, accepted };
   const line = mainLine(tree);
   const objective =
-    goal.kind === 'mate' ? OBJECTIVE_BY_KIND.mate(goal.mateIn) : goal.kind === 'single' ? (goal.maxUserMoves === 1 && ex.theme !== 'positional' ? ex.objective : OBJECTIVE_BY_KIND.single()) : OBJECTIVE_BY_KIND[goal.kind](goal.maxUserMoves);
+    goal.kind === 'mate' ? OBJECTIVE_BY_KIND.mate(goal.mateIn, goal.maxUserMoves) : goal.kind === 'single' ? (goal.maxUserMoves === 1 && ex.theme !== 'positional' ? ex.objective : OBJECTIVE_BY_KIND.single()) : OBJECTIVE_BY_KIND[goal.kind](goal.maxUserMoves);
   return {
     ...ex,
     kind: goal.kind,

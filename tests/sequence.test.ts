@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { goalFor, legacyTree, mainLine, normalizeExercise, playSolverMove, type SolveState } from '../src/services/exercises/sequence';
+import { goalFor, legacyTree, mainLine, mateBudget, normalizeExercise, playSolverMove, type SolveState } from '../src/services/exercises/sequence';
+import type { EngineLike } from '../src/services/analysis/gameAnalyzer';
 import { applyUci, terminalState } from '../src/services/chess/position';
 import { mateInOne } from '../src/services/chess/tactics';
 import type { Exercise, ExerciseGoal, Score, SolutionNode } from '../src/types/domain';
@@ -143,5 +144,30 @@ describe('goals and legacy exercises', () => {
     expect(n.goal.maxUserMoves).toBe(2);
     expect(mainLine(n.tree)).toEqual(['a1a7', 'g8f8', 'b2b8']);
     expect(legacyTree({ ...legacy, solutionLine: ['a1a7'] }).replies).toEqual({});
+  });
+});
+
+describe('long mates (audit C1)', () => {
+  const LONG: ExerciseGoal = { kind: 'mate', maxUserMoves: 4, targetWin: 100, mateIn: 6 };
+
+  it('keeps the full mate distance as the budget, not the 4-move limit', () => {
+    expect(mateBudget(LONG, 0)).toBe(6);
+    expect(mateBudget(LONG, 3)).toBe(3);
+    expect(mateBudget({ kind: 'mate', maxUserMoves: 2, targetWin: 100 }, 1)).toBe(1);
+  });
+
+  it('repairs a stored tree with an empty root from the accepted moves', () => {
+    const accepted = [{ uci: 'a1a7', san: 'Ra7', score: mate(2) }];
+    const broken = exercise({ acceptableMoves: accepted, tree: { fen: ROOKS, accepted: [], replies: {}, depth: 16 } });
+    expect(normalizeExercise(broken).tree.accepted).toEqual(accepted);
+  });
+
+  it('verifies a move from an empty node with the engine instead of claiming it is unavailable', async () => {
+    const engine: EngineLike = {
+      analyze: async ({ fen }) => ({ fen, depth: 12, multiPv: 1, timeMs: 0, complete: true, lines: [{ multipv: 1, depth: 12, score: mate(2), pv: ['a1a7'] }] }) as never,
+    } as EngineLike;
+    const ex = exercise();
+    const v = await playSolverMove(ex, { node: { fen: ROOKS, accepted: [], replies: {}, depth: 0 }, userMoves: 0, fen: ROOKS }, 'a1a7', { engine, depth: 12, tolerance: 5 });
+    expect(v.kind).not.toBe('unverifiable');
   });
 });

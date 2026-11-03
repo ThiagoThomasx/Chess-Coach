@@ -100,11 +100,29 @@ describe('training persistence', () => {
     const ex = exerciseFixture('g');
     expect((await addExercise(ex)).added).toBe(true);
     expect((await addExercise({ ...ex, id: 'other' })).added).toBe(false); // same FEN
-    const updated = await recordAttempt(ex, { exerciseId: ex.id, at: 1000, correct: false, hintsUsed: 1, revealed: true, timeMs: 30_000, moves: ['a1a7'] }, [1, 3]);
+    const { exercise: updated } = await recordAttempt(ex, { exerciseId: ex.id, at: 1000, correct: false, hintsUsed: 1, revealed: true, timeMs: 30_000, moves: ['a1a7'] }, [1, 3]);
     expect(updated.srs.box).toBe(0);
     expect(await attemptsFor(ex.id)).toHaveLength(1);
     const events = await listSkillEvents();
     expect(events[0]).toMatchObject({ skill: 'patterns', outcome: 0, ref: { exerciseId: 'ex1' } });
+  });
+
+  it('treats a repeat right after seeing the answer as practice (audit A1)', async () => {
+    const ex = exerciseFixture('g');
+    await addExercise(ex);
+    const attempt = (at: number, hintsUsed: number) => ({ exerciseId: ex.id, at, correct: true, hintsUsed, revealed: false, timeMs: 5_000, moves: ['a1a8'] });
+    const first = await recordAttempt(ex, attempt(1_000, 3), [1, 3]);
+    expect(first.practice).toBe(false);
+    // "Resolver de novo" a minute later, now without hints.
+    const repeat = await recordAttempt(first.exercise, attempt(61_000, 0), [1, 3]);
+    expect(repeat.practice).toBe(true);
+    expect(repeat.exercise.srs).toEqual(first.exercise.srs);
+    expect(await attemptsFor(ex.id)).toHaveLength(1);
+    expect((await listSkillEvents()).some((e) => e.independent)).toBe(false);
+    // After the practice window, a clean solve is real retrieval again.
+    const later = await recordAttempt(first.exercise, attempt(1_000 + 11 * 60_000, 0), [1, 3]);
+    expect(later.practice).toBe(false);
+    expect(later.exercise.srs.box).toBe(1);
   });
 
   it('persists settings merged over defaults', async () => {

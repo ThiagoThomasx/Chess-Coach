@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, selectExercisePositions } from '../src/services/exercises/generate';
-import { validateStep, judgeWithEngine, hintFor } from '../src/services/exercises/validate';
+import { validateStep, judgeWithEngine, hintFor, hintForNode } from '../src/services/exercises/validate';
 import { nextSrs, outcomeOf, DAY_MS, RETRY_DELAY_MS } from '../src/services/scheduling/srs';
 import { applyUci, isValidFen, replayGame } from '../src/services/chess/position';
 import { reviewMove } from '../src/services/analysis/gameAnalyzer';
@@ -138,5 +138,34 @@ describe('spaced repetition', () => {
     expect(outcomeOf(true, 1, false)).toBe('assisted');
     expect(outcomeOf(true, 0, true)).toBe('fail');
     expect(outcomeOf(true, 0, false)).toBe('independent');
+  });
+});
+
+describe('first hint carries information (audit A5)', () => {
+  const objective = 'Encontre o melhor lance nesta posição.';
+  const first = (fen: string, uci: string) => hintForNode(fen, objective, [{ uci, san: uci }], 1);
+
+  it('never repeats the objective and never names the square', () => {
+    const cases: [string, string, RegExp][] = [
+      ['6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1', 'a1a8', /xeque-mate/],
+      ['4k3/8/8/8/8/8/8/R3K3 w Q - 0 1', 'a1a8', /dá xeque/],
+      ['4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1', 'd2d5', /captura/],
+      ['r3k3/8/8/8/8/8/2N5/4K3 w - - 0 1', 'c2b4', /tranquilo/],
+      ['4k3/8/3r1q2/8/8/8/3N4/4K3 w - - 0 1', 'd2e4', /duas peças/],
+      ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'g1f3', /cavalo/],
+    ];
+    for (const [fen, uci, expected] of cases) {
+      const h = first(fen, uci);
+      expect(h.text).not.toContain(objective);
+      expect(h.text).toMatch(expected);
+      expect(h.square).toBeUndefined();
+      expect(h.text).not.toContain(uci.slice(2, 4));
+    }
+  });
+
+  it('keeps the piece for hint 2 and the move for hint 3', () => {
+    const fen = '4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1';
+    expect(hintForNode(fen, objective, [{ uci: 'd2d5', san: 'Rxd5' }], 2).square).toBe('d2');
+    expect(hintForNode(fen, objective, [{ uci: 'd2d5', san: 'Rxd5' }], 3).text).toContain('Rxd5');
   });
 });

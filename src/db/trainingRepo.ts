@@ -1,5 +1,5 @@
 import type { Attempt, Exercise, SkillEvent } from '../types/domain';
-import { nextSrs, outcomeOf } from '../services/scheduling/srs';
+import { isPracticeRepeat, nextSrs, outcomeOf } from '../services/scheduling/srs';
 import { eventsFromAttempt } from '../services/adaptation/skills';
 import { getDb } from './database';
 
@@ -37,20 +37,29 @@ export async function listAttempts(): Promise<Attempt[]> {
   return getDb().attempts.orderBy('at').toArray();
 }
 
+export interface RecordedAttempt {
+  exercise: Exercise;
+  /** True when the attempt was practice (see isPracticeRepeat) and nothing was stored. */
+  practice: boolean;
+}
+
 /**
  * Records an attempt atomically: stores it, reschedules the exercise and
- * appends the corresponding skill evidence.
+ * appends the corresponding skill evidence. A repeat inside the practice
+ * window changes nothing.
  */
-export async function recordAttempt(ex: Exercise, attempt: Attempt, intervals: readonly number[]): Promise<Exercise> {
+export async function recordAttempt(ex: Exercise, attempt: Attempt, intervals: readonly number[]): Promise<RecordedAttempt> {
   const db = getDb();
-  const outcome = outcomeOf(attempt.correct, attempt.hintsUsed, attempt.revealed);
-  const updated: Exercise = { ...ex, srs: nextSrs(ex.srs, outcome, attempt.at, intervals) };
-  await db.transaction('rw', db.attempts, db.exercises, db.skillEvents, async () => {
+  return db.transaction('rw', db.attempts, db.exercises, db.skillEvents, async () => {
+    const previous = (await db.attempts.where('exerciseId').equals(ex.id).sortBy('at')).at(-1);
+    if (isPracticeRepeat(previous?.at, attempt.at)) return { exercise: ex, practice: true };
+    const outcome = outcomeOf(attempt.correct, attempt.hintsUsed, attempt.revealed);
+    const updated: Exercise = { ...ex, srs: nextSrs(ex.srs, outcome, attempt.at, intervals) };
     await db.attempts.add(attempt);
     await db.exercises.put(updated);
     await db.skillEvents.bulkAdd(eventsFromAttempt(ex, attempt));
+    return { exercise: updated, practice: false };
   });
-  return updated;
 }
 
 export async function listSkillEvents(): Promise<SkillEvent[]> {

@@ -98,6 +98,11 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
                 Resultado salvo. Próxima revisão: {new Date(s.nextDue).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
               </p>
             )}
+            {s.practice && (
+              <p className="xs muted" style={{ marginTop: '0.75rem' }} data-testid="practice-note">
+                Repetição de prática: feita logo após a tentativa anterior, não altera a revisão nem o perfil.
+              </p>
+            )}
           </section>
           {done && (
             <section className="panel fade-in">
