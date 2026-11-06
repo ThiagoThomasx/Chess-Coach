@@ -45,7 +45,7 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
     <div className="page">
       <header className="page-head">
         <div>
-          <Link to="/train" className="small row">
+          <Link to="/train" className="small row touch-link">
             <ArrowLeft size={14} /> Treino
           </Link>
           {/* The theme gives the motif away: it is shown only once an attempt has ended. */}
@@ -136,7 +136,7 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
               </button>
             </div>
             {ex.gameId ? (
-              <Link to={`/analysis/${ex.gameId}`} className="small">
+              <Link to={`/analysis/${ex.gameId}`} className="small touch-link">
                 Partida de origem · meia-jogada {ex.ply}
               </Link>
             ) : (

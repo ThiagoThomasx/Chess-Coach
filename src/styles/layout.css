@@ -200,6 +200,12 @@
     display: none;
   }
 
+  .nav a {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
   .grid-2,
   .grid-3 {
     grid-template-columns: minmax(0, 1fr);

@@ -77,7 +77,7 @@ export function ProgressPage() {
         </div>
         <SkillProfile profile={profile} />
         <details style={{ marginTop: '0.9rem' }}>
-          <summary className="small muted" style={{ cursor: 'pointer' }}>
+          <summary className="small muted touch-link" style={{ cursor: 'pointer' }}>
             Como o perfil é calculado
           </summary>
           <div className="small muted stack" style={{ marginTop: '0.5rem' }}>

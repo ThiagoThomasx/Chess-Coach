@@ -151,3 +151,24 @@ test('invalid backup is refused without touching data', async ({ page }) => {
   await page.getByTestId('restore-input').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"format":"x"}') });
   await expect(page.getByText(/Backup recusado/)).toBeVisible();
 });
+
+// Sprint 3.1: a storage failure while creating an exercise is reported and the button recovers.
+test('a failed exercise write shows an error and does not leave the button stuck', async ({ page }) => {
+  await page.goto('/#/games');
+  await page.getByTestId('pgn-input').setInputFiles({ name: 'a.pgn', mimeType: 'application/x-chess-pgn', buffer: Buffer.from(BLUNDER_PGN) });
+  await page.getByTestId('game-link').click();
+  await page.getByTestId('run-quick').click();
+  await expect(page.getByTestId('analysis-status')).toHaveText('Análise concluída', { timeout: 120_000 });
+  await page.getByTestId('move-5').click();
+  // Every IndexedDB cursor now fails, as with a quota or I/O error inside the transaction.
+  await page.evaluate(() => {
+    IDBObjectStore.prototype.openCursor = () => {
+      throw new DOMException('simulated storage failure', 'UnknownError');
+    };
+  });
+  const create = page.getByTestId('create-exercise');
+  await create.click();
+  await expect(page.locator('.toasts')).toContainText('Não foi possível salvar o exercício');
+  await expect(create).toBeEnabled();
+  await expect(create).toContainText('Criar exercício desta posição');
+});

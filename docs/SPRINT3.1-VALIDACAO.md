@@ -2,6 +2,8 @@
 
 Data: 2026-11-03 · Branch `fix/sprint3-phase1` (PR #1). Sem merge e sem auto-merge.
 
+> **Atualização (2026-11-05):** o item 1 da proposta de deduplicação (transação) e as observações de toque e de layout de Aberturas da seção 3 foram tratados na rodada seguinte. Veja [SPRINT3-1-RELATORIO.md](SPRINT3-1-RELATORIO.md). Os itens 2 e 3 da proposta (índice `posKey`) continuam adiados.
+
 ## 1. Integração contínua
 
 O workflow [.github/workflows/ci.yml](../.github/workflows/ci.yml) roda em todo pull request e em todo push na `main`. Pushes em outros branches não disparam o workflow, para que um mesmo commit de PR não rode duas vezes. Os passos, em um único job em `ubuntu-latest` com Node 24:

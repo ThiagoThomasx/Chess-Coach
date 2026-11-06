@@ -274,11 +274,26 @@
 }
 
 /* ---------- Openings ---------- */
+/* DOM order is board, details, library (reading and keyboard order on phones);
+   the areas place the library on the left on wider screens. */
 .openings {
   display: grid;
   grid-template-columns: 280px minmax(300px, 520px) minmax(280px, 1fr);
+  grid-template-areas: 'library board details';
   gap: 1.1rem;
   align-items: start;
+}
+
+.openings-library {
+  grid-area: library;
+}
+
+.openings-board {
+  grid-area: board;
+}
+
+.openings-details {
+  grid-area: details;
 }
 
 .opening-list {
@@ -318,16 +333,25 @@
 @media (max-width: 1200px) {
   .openings {
     grid-template-columns: 240px minmax(0, 1fr);
-  }
-
-  .openings > :last-child {
-    grid-column: 1 / -1;
+    grid-template-areas:
+      'library board'
+      'details details';
   }
 }
 
 @media (max-width: 760px) {
+  /* Phones: board and move navigation first, then the line details, then the library. */
   .openings {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'board'
+      'details'
+      'library';
+  }
+
+  .openings-board {
+    /* Clears the sticky top bar when scrolled into view. */
+    scroll-margin-top: 72px;
   }
 }
 

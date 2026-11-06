@@ -371,6 +371,32 @@
   color: var(--text);
 }
 
+@media (pointer: coarse) {
+  .tabs button {
+    min-height: 44px;
+  }
+
+  /* Lone small links ("Detalhes", back links, a details summary): larger hit area,
+     same layout (the negative margin cancels the padding; display is untouched).
+     Not applied to stacked list links, where enlarged areas would overlap. */
+  .panel-head > a,
+  .touch-link {
+    padding: 14px 0.4rem;
+    margin: -14px -0.4rem;
+  }
+
+  /* Analysis move list: rows big enough to tap; the list keeps its own scroll box. */
+  .moves button,
+  .moves .num {
+    min-height: 44px;
+  }
+
+  .moves .num {
+    display: flex;
+    align-items: center;
+  }
+}
+
 .chart-box {
   width: 100%;
   height: 220px;

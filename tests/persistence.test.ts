@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import Dexie from 'dexie';
-import { ChessQuestDB, setDb } from '../src/db/database';
+import { ChessQuestDB, getDb, setDb } from '../src/db/database';
 import { importPgn, listGames, getGame, deleteGame, listImports, setUserColor } from '../src/db/gamesRepo';
 import { getAnalysis, saveAnalysis, recoverInterruptedAnalyses, dbEvalCache, toggleBookmark, listBookmarks } from '../src/db/analysisRepo';
 import { addExercise, recordAttempt, attemptsFor, getExercise, listSkillEvents } from '../src/db/trainingRepo';
@@ -145,6 +145,44 @@ describe('training persistence', () => {
   it('rejects illegal custom opening lines', async () => {
     await expect(addCustomOpening('X', 'w', ['e4', 'e4'], [])).rejects.toThrow(/ilegal/);
     expect((await addCustomOpening('Minha', 'w', ['d4', 'd5', 'c4'], [])).mainLine.moves).toHaveLength(3);
+  });
+});
+
+describe('exercise deduplication is atomic (Sprint 3.1)', () => {
+  const sameSpot = (id: string, moveNo: number): Exercise => ({
+    ...exerciseFixture('g'),
+    id,
+    fen: `6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 ${moveNo}`,
+  });
+
+  it('two concurrent inserts of the same position store one exercise', async () => {
+    const results = await Promise.all([addExercise(sameSpot('a', 1)), addExercise(sameSpot('b', 30))]);
+    expect(await getDb().exercises.count()).toBe(1);
+    expect(results.filter((r) => r.added)).toHaveLength(1);
+    expect(results[0].id).toBe(results[1].id);
+  });
+
+  it('concurrent inserts from two connections (two tabs) store one exercise', async () => {
+    const name = `tabs-${++n}`;
+    const tabA = new ChessQuestDB(name);
+    const tabB = new ChessQuestDB(name);
+    setDb(tabA);
+    const fromA = addExercise(sameSpot('a', 1));
+    setDb(tabB);
+    const fromB = addExercise(sameSpot('b', 30));
+    await Promise.all([fromA, fromB]);
+    expect(await tabA.exercises.count()).toBe(1);
+    tabA.close();
+    tabB.close();
+  });
+
+  it('a failed insert writes nothing and reports the error', async () => {
+    await addExercise(sameSpot('a', 1));
+    const clash: Exercise = { ...exerciseFixture('g'), id: 'a', fen: '4k3/8/8/8/8/8/8/R3K3 w - - 0 1' };
+    await expect(addExercise(clash)).rejects.toThrow();
+    const rows = await getDb().exercises.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.fen).toBe(sameSpot('a', 1).fen);
   });
 });
 

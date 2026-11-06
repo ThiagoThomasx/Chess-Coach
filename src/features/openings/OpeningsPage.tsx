@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -14,6 +14,9 @@ import type { Color, Opening } from '../../types/domain';
 
 type Mode = 'study' | 'practice' | 'add';
 
+/** Single-column layout (features.css): the library comes after the board and the line details. */
+const STACKED_LAYOUT = '(max-width: 760px)';
+
 export function OpeningsPage() {
   const custom = useLiveQuery(() => getDb().customOpenings.toArray(), [], []);
   const repertoire = useLiveQuery(() => getDb().repertoire.toArray(), [], []);
@@ -24,6 +27,7 @@ export function OpeningsPage() {
   const [lineId, setLineId] = useState('main');
   const [mode, setMode] = useState<Mode>('study');
   const [ply, setPly] = useState(0);
+  const boardRef = useRef<HTMLElement>(null);
   const opening = all.find((o) => o.id === selectedId) ?? all[0];
   if (!opening) return null;
   const lines = [opening.mainLine, ...opening.variations];
@@ -42,6 +46,11 @@ export function OpeningsPage() {
     setPly(0);
     setMode('study');
   };
+  /** From the library on a phone, the chosen line's board is out of view: bring it back. */
+  const pickFromLibrary = (id: string) => {
+    select(id);
+    if (window.matchMedia?.(STACKED_LAYOUT).matches) boardRef.current?.scrollIntoView({ block: 'start' });
+  };
   const sideLabel = (c: Color) => (c === 'w' ? 'Brancas' : 'Pretas');
   const lastMove = (() => {
     if (shown === 0) return null;
@@ -59,28 +68,8 @@ export function OpeningsPage() {
         {dueLines.length > 0 && <span className="tag tag-info">{dueLines.length} linha(s) do repertório para revisar</span>}
       </header>
       <div className="openings">
-        <aside className="panel">
-          <h3>Biblioteca</h3>
-          <div className="opening-list" style={{ marginTop: '0.5rem' }}>
-            {all.map((o) => (
-              <button key={o.id} aria-current={o.id === opening.id} onClick={() => select(o.id)} data-testid="opening-item">
-                <span className="small">
-                  {repertoire.some((r) => r.openingId === o.id) && <Star size={12} color="var(--accent)" style={{ marginRight: 4 }} />}
-                  {o.name}
-                </span>
-                <span className="xs faint">
-                  {o.custom ? 'Linha pessoal' : o.eco} · {sideLabel(o.side)}
-                </span>
-              </button>
-            ))}
-          </div>
-          <hr className="divider" />
-          <button className="btn btn-sm" onClick={() => setMode('add')}>
-            + Adicionar linha manualmente
-          </button>
-        </aside>
 
-        <section className="stack">
+        <section className="stack openings-board" ref={boardRef}>
           {mode === 'add' ? (
             <div className="panel">
               <h2>Nova linha pessoal</h2>
@@ -113,7 +102,7 @@ export function OpeningsPage() {
           )}
         </section>
 
-        <section className="panel stack">
+        <section className="panel stack openings-details">
           <div className="panel-head" style={{ marginBottom: 0 }}>
             <h2>{opening.name}</h2>
             {opening.custom && (
@@ -179,6 +168,27 @@ export function OpeningsPage() {
           </div>
           {!opening.custom && <p className="xs faint">As ideias descritas são princípios gerais amplamente aceitos, não uma análise teórica exaustiva.</p>}
         </section>
+
+        <aside className="panel openings-library">
+          <h3>Biblioteca</h3>
+          <div className="opening-list" style={{ marginTop: '0.5rem' }}>
+            {all.map((o) => (
+              <button key={o.id} aria-current={o.id === opening.id} onClick={() => pickFromLibrary(o.id)} data-testid="opening-item">
+                <span className="small">
+                  {repertoire.some((r) => r.openingId === o.id) && <Star size={12} color="var(--accent)" style={{ marginRight: 4 }} />}
+                  {o.name}
+                </span>
+                <span className="xs faint">
+                  {o.custom ? 'Linha pessoal' : o.eco} · {sideLabel(o.side)}
+                </span>
+              </button>
+            ))}
+          </div>
+          <hr className="divider" />
+          <button className="btn btn-sm" onClick={() => setMode('add')}>
+            + Adicionar linha manualmente
+          </button>
+        </aside>
       </div>
     </div>
   );

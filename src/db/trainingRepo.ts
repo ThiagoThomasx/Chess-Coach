@@ -12,14 +12,22 @@ export async function getExercise(id: string): Promise<Exercise | undefined> {
   return getDb().exercises.get(id);
 }
 
-/** Stores an exercise unless one already exists for the same position (move counters ignored). */
+/**
+ * Stores an exercise unless one already exists for the same position (move
+ * counters ignored). The check and the insert share one read-write
+ * transaction, so concurrent calls (manual + automatic creation, or two tabs)
+ * cannot both pass the check: IndexedDB serializes write transactions on the
+ * same store.
+ */
 export async function addExercise(ex: Exercise): Promise<{ added: boolean; id: string }> {
   const db = getDb();
   const key = fenKey(ex.fen);
-  const dup = await db.exercises.filter((e) => fenKey(e.fen) === key).first();
-  if (dup) return { added: false, id: dup.id };
-  await db.exercises.add(ex);
-  return { added: true, id: ex.id };
+  return db.transaction('rw', db.exercises, async () => {
+    const dup = await db.exercises.filter((e) => fenKey(e.fen) === key).first();
+    if (dup) return { added: false, id: dup.id };
+    await db.exercises.add(ex);
+    return { added: true, id: ex.id };
+  });
 }
 
 export async function deleteExercise(id: string): Promise<void> {

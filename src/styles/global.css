@@ -232,6 +232,29 @@ textarea {
   cursor: pointer;
 }
 
+/* Touch screens: 44 px targets (WCAG 2.5.5 / platform guidelines). Mouse layouts keep the compact sizes. */
+@media (pointer: coarse) {
+  .btn,
+  .btn-sm,
+  .input,
+  .select {
+    height: 44px;
+  }
+
+  .btn-icon {
+    width: 44px;
+  }
+
+  .check {
+    min-height: 44px;
+  }
+
+  .check input {
+    width: 20px;
+    height: 20px;
+  }
+}
+
 /* ---------- Surfaces ---------- */
 .panel {
   background: var(--surface);

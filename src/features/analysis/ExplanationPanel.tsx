@@ -59,11 +59,17 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
       return;
     }
     setIsCreating(true);
-    const full = await completeExercise(ex, settings, getEngine());
-    const r = await addExercise(full);
-    setIsCreating(false);
-    setCreatedId(r.id);
-    toast(r.added ? 'Exercício criado' : 'Já existe um exercício para esta posição', r.added ? 'good' : 'info');
+    try {
+      const full = await completeExercise(ex, settings, getEngine());
+      const r = await addExercise(full);
+      setCreatedId(r.id);
+      toast(r.added ? 'Exercício criado' : 'Já existe um exercício para esta posição', r.added ? 'good' : 'info');
+    } catch {
+      // Engine or storage failure: the transaction in addExercise rolled back, so nothing was stored.
+      toast('Não foi possível salvar o exercício. Nada foi gravado; tente novamente.', 'bad');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (

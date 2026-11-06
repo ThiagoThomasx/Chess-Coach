@@ -91,7 +91,7 @@ function AnalysisView({ game }: { game: Game }) {
     <div className="page">
       <header className="page-head">
         <div>
-          <Link to="/games" className="small row">
+          <Link to="/games" className="small row touch-link">
             <ArrowLeft size={14} /> Partidas
           </Link>
           <h1 style={{ marginTop: '0.3rem' }}>
