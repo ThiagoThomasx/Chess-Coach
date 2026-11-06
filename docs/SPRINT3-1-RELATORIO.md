@@ -1,6 +1,44 @@
 # ChessQuest — Sprint 3.1: fechamento do PR #1
 
-Data: 2026-11-05 · Branch `fix/sprint3-phase1` ([PR #1](https://github.com/ThiagoThomasx/Chess-Coach/pull/1)), sobre o commit `6f0aef9`. Sem merge, sem auto-merge e sem alteração nas regras do repositório. As alterações desta rodada ainda não foram enviadas (push) e dependem de autorização.
+Data: 2026-11-05 · Branch `fix/sprint3-phase1` ([PR #1](https://github.com/ThiagoThomasx/Chess-Coach/pull/1)), sobre o commit `6f0aef9`. As alterações desta rodada foram commitadas e enviadas como `b38830e`. Sem merge, sem auto-merge e sem alteração nas regras do repositório.
+
+## Situação atual (atualizado em 2026-11-06)
+
+**CI no commit `b38830e`**: [execução 42135543730](https://github.com/ThiagoThomasx/Chess-Coach/actions/runs/42135543730), evento `pull_request`, terminou com **sucesso**.
+
+- Verificação dos arquivos WASM do Stockfish: aprovada.
+- Typecheck: aprovado.
+- Vitest: 239/239, incluindo o Stockfish real com 21/21.
+- Build: aprovado.
+- Playwright E2E: 28/28.
+- Nenhum teste ignorado.
+- Avisos apenas informativos: deprecação do `punycode` no Node, e as actions na v4 (`checkout`, `setup-node`, `cache`), feitas para Node 20, rodando em Node 24.
+
+**Validação mobile**
+
+- *Validado por automação* (Playwright, Chromium com emulação de toque):
+  - viewports de 360, 390, 430 e 768 px;
+  - ausência de rolagem horizontal;
+  - alvos de toque de 44 px;
+  - tabuleiro de Aberturas visível e priorizado;
+  - volta da biblioteca de aberturas para o tabuleiro;
+  - comportamento no desktop preservado.
+- *Ainda depende de teste em aparelho físico, **não realizado***:
+  - precisão do toque e arraste de peças;
+  - desempenho do Stockfish em CPU de celular;
+  - persistência ao sair do app e voltar;
+  - teclado virtual e barra de endereço;
+  - rotação de tela;
+  - compatibilidade com Safari no iOS.
+
+  O roteiro está na seção 6.
+
+**PR #1**
+
+- Continua aberto. O último commit validado é `b38830e`, com o CI aprovado nesse SHA.
+- Na última verificação, estava sem conflitos (`MERGEABLE`, `CLEAN`) e sem revisões nem comentários pendentes.
+- O auto-merge está desativado e nenhum merge foi feito.
+- A `main` não tem branch protection, rulesets nem required status checks: o check `verify` é apenas informativo.
 
 ## 1. Diagnóstico
 
@@ -133,7 +171,7 @@ O diff completo de `main...HEAD` (11 commits) e o working tree desta rodada fora
 
 **Pendências para aprovação**:
 
-- Commit e push desta rodada, que ainda dependem da sua autorização. Depois do push, é preciso que o CI fique verde no novo commit.
+- ~~Commit e push desta rodada, e CI verde no novo commit.~~ Concluído: o commit `b38830e` foi enviado e o CI passou nele (veja "Situação atual").
 - Proteção de branch: a `main` **não tem proteção nem rulesets** (a API do GitHub responde "Branch not protected"). O check `verify` passa, mas **não é obrigatório** para o merge. A configuração não foi alterada.
 - O teste em aparelho físico (seção 6).
 
@@ -206,5 +244,6 @@ Todas as verificações automatizadas passaram e não há bloqueador conhecido. 
 As ressalvas são:
 
 1. O teste em aparelho físico (iOS incluído) ainda não foi feito. O roteiro está na seção 6.
-2. As alterações desta rodada ainda não foram enviadas, e o CI precisa ficar verde no novo commit.
-3. O check do CI não é obrigatório para o merge, porque a `main` não tem proteção configurada.
+2. O check do CI não é obrigatório para o merge, porque a `main` não tem proteção configurada.
+
+(Uma ressalva anterior, a de que as alterações ainda não tinham sido enviadas e o CI estava pendente, foi superada: `b38830e` foi enviado e o CI passou.)
