@@ -65,12 +65,41 @@ export function sideToMove(fen: string): Color {
 }
 
 export function isValidFen(fen: string): boolean {
-  try {
-    new Chess(fen);
-    return true;
-  } catch {
-    return false;
+  return positionProblem(fen) === null;
+}
+
+/**
+ * Why a FEN cannot occur in a game, or null when it can. chess.js accepts
+ * some impossible positions that make the engine crash (e.g. the side not to
+ * move in check), so they are rejected here.
+ */
+export function positionProblem(fen: string): string | null {
+  const board = fen.trim().split(/\s+/)[0] ?? '';
+  const ranks = board.split('/');
+  if (ranks.length === 8) {
+    for (const [king, side] of [['K', 'brancas'], ['k', 'pretas']] as const) {
+      const n = [...board].filter((c) => c === king).length;
+      if (n !== 1) return `as ${side} têm ${n} rei(s)`;
+    }
+    if (/[pP]/.test(`${ranks[0] ?? ''}${ranks[7] ?? ''}`)) return 'há peão na 1ª ou 8ª fileira';
+    for (const [pawn, side] of [['P', 'brancas'], ['p', 'pretas']] as const) {
+      if ([...board].filter((c) => c === pawn).length > 8) return `as ${side} têm mais de 8 peões`;
+    }
   }
+  let chess: Chess;
+  try {
+    chess = new Chess(fen);
+  } catch (e) {
+    return `FEN inválido: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  const parts = fen.split(' ');
+  const flipped = [parts[0], chess.turn() === 'w' ? 'b' : 'w', parts[2] ?? '-', '-', parts[4] ?? '0', parts[5] ?? '1'].join(' ');
+  try {
+    if (new Chess(flipped).inCheck()) return 'o lado que não joga está em xeque';
+  } catch {
+    return 'posição inválida';
+  }
+  return null;
 }
 
 /** Converts a UCI move to SAN in the given position, or null if illegal. */

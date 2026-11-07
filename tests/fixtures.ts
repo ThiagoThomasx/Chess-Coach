@@ -29,7 +29,7 @@ export interface FakeScript {
 }
 
 /** A scripted UCI engine used to unit-test the protocol driver without WASM. */
-export function fakeTransport(script: FakeScript, opts: { failInit?: boolean; noUciOk?: boolean } = {}): EngineTransport & { sent: string[] } {
+export function fakeTransport(script: FakeScript, opts: { failInit?: boolean; noUciOk?: boolean; hangOnGo?: boolean; crashOnGo?: boolean } = {}): EngineTransport & { sent: string[] } {
   const listeners: ((l: string) => void)[] = [];
   const errors: ((e: Error) => void)[] = [];
   const sent: string[] = [];
@@ -48,6 +48,8 @@ export function fakeTransport(script: FakeScript, opts: { failInit?: boolean; no
       } else if (cmd === 'isready') setTimeout(() => emit('readyok'), 1);
       else if (cmd.startsWith('setoption name MultiPV value ')) multipv = Number(cmd.split(' ').pop());
       else if (cmd.startsWith('position fen ')) fen = cmd.slice('position fen '.length);
+      else if (cmd.startsWith('go') && opts.crashOnGo) setTimeout(() => errors.forEach((e) => e(new Error('Uncaught [object Object]'))), 1);
+      else if (cmd.startsWith('go') && opts.hangOnGo) return;
       else if (cmd.startsWith('go')) {
         const depth = Number(/depth (\d+)/.exec(cmd)?.[1] ?? 10);
         const r = script.respond(fen, depth, multipv);

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import Dexie from 'dexie';
-import { ChessQuestDB, setDb } from '../src/db/database';
+import { ChessQuestDB, getDb, setDb } from '../src/db/database';
 import { importPgn, listGames, getGame, deleteGame, listImports, setUserColor } from '../src/db/gamesRepo';
 import { getAnalysis, saveAnalysis, recoverInterruptedAnalyses, dbEvalCache, toggleBookmark, listBookmarks } from '../src/db/analysisRepo';
 import { addExercise, recordAttempt, attemptsFor, getExercise, listSkillEvents } from '../src/db/trainingRepo';
@@ -10,6 +10,7 @@ import { exportBackup, restoreBackup, validateBackup, clearData } from '../src/s
 import { emptyAnalysis } from '../src/services/analysis/gameAnalyzer';
 import { toggleRepertoire, recordOpeningAttempt, listRepertoire, addCustomOpening } from '../src/db/openingsRepo';
 import type { Exercise } from '../src/types/domain';
+import { normalizeExercise } from '../src/services/exercises/sequence';
 import { OPERA_GAME, SHORT_BLUNDER_GAME } from './fixtures';
 
 let n = 0;
@@ -100,11 +101,29 @@ describe('training persistence', () => {
     const ex = exerciseFixture('g');
     expect((await addExercise(ex)).added).toBe(true);
     expect((await addExercise({ ...ex, id: 'other' })).added).toBe(false); // same FEN
-    const updated = await recordAttempt(ex, { exerciseId: ex.id, at: 1000, correct: false, hintsUsed: 1, revealed: true, timeMs: 30_000, moves: ['a1a7'] }, [1, 3]);
+    const { exercise: updated } = await recordAttempt(ex, { exerciseId: ex.id, at: 1000, correct: false, hintsUsed: 1, revealed: true, timeMs: 30_000, moves: ['a1a7'] }, [1, 3]);
     expect(updated.srs.box).toBe(0);
     expect(await attemptsFor(ex.id)).toHaveLength(1);
     const events = await listSkillEvents();
     expect(events[0]).toMatchObject({ skill: 'patterns', outcome: 0, ref: { exerciseId: 'ex1' } });
+  });
+
+  it('treats a repeat right after seeing the answer as practice (audit A1)', async () => {
+    const ex = exerciseFixture('g');
+    await addExercise(ex);
+    const attempt = (at: number, hintsUsed: number) => ({ exerciseId: ex.id, at, correct: true, hintsUsed, revealed: false, timeMs: 5_000, moves: ['a1a8'] });
+    const first = await recordAttempt(ex, attempt(1_000, 3), [1, 3]);
+    expect(first.practice).toBe(false);
+    // "Resolver de novo" a minute later, now without hints.
+    const repeat = await recordAttempt(first.exercise, attempt(61_000, 0), [1, 3]);
+    expect(repeat.practice).toBe(true);
+    expect(repeat.exercise.srs).toEqual(first.exercise.srs);
+    expect(await attemptsFor(ex.id)).toHaveLength(1);
+    expect((await listSkillEvents()).some((e) => e.independent)).toBe(false);
+    // After the practice window, a clean solve is real retrieval again.
+    const later = await recordAttempt(first.exercise, attempt(1_000 + 11 * 60_000, 0), [1, 3]);
+    expect(later.practice).toBe(false);
+    expect(later.exercise.srs.box).toBe(1);
   });
 
   it('persists settings merged over defaults', async () => {
@@ -129,6 +148,44 @@ describe('training persistence', () => {
   });
 });
 
+describe('exercise deduplication is atomic (Sprint 3.1)', () => {
+  const sameSpot = (id: string, moveNo: number): Exercise => ({
+    ...exerciseFixture('g'),
+    id,
+    fen: `6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 ${moveNo}`,
+  });
+
+  it('two concurrent inserts of the same position store one exercise', async () => {
+    const results = await Promise.all([addExercise(sameSpot('a', 1)), addExercise(sameSpot('b', 30))]);
+    expect(await getDb().exercises.count()).toBe(1);
+    expect(results.filter((r) => r.added)).toHaveLength(1);
+    expect(results[0].id).toBe(results[1].id);
+  });
+
+  it('concurrent inserts from two connections (two tabs) store one exercise', async () => {
+    const name = `tabs-${++n}`;
+    const tabA = new ChessQuestDB(name);
+    const tabB = new ChessQuestDB(name);
+    setDb(tabA);
+    const fromA = addExercise(sameSpot('a', 1));
+    setDb(tabB);
+    const fromB = addExercise(sameSpot('b', 30));
+    await Promise.all([fromA, fromB]);
+    expect(await tabA.exercises.count()).toBe(1);
+    tabA.close();
+    tabB.close();
+  });
+
+  it('a failed insert writes nothing and reports the error', async () => {
+    await addExercise(sameSpot('a', 1));
+    const clash: Exercise = { ...exerciseFixture('g'), id: 'a', fen: '4k3/8/8/8/8/8/8/R3K3 w - - 0 1' };
+    await expect(addExercise(clash)).rejects.toThrow();
+    const rows = await getDb().exercises.toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.fen).toBe(sameSpot('a', 1).fen);
+  });
+});
+
 describe('backup and restore', () => {
   it('round-trips all data', async () => {
     await importPgn(OPERA_GAME, 'a.pgn', []);
@@ -150,6 +207,28 @@ describe('backup and restore', () => {
     }
     expect(await listGames()).toHaveLength(1);
     expect(validateBackup({ format: 'chessquest-backup', schemaVersion: 1, tables: { unknown: [] } }).errors[0]).toMatch(/desconhecida/);
+  });
+
+  it('a partial backup replaces only the tables it contains', async () => {
+    await importPgn(OPERA_GAME, 'a.pgn', []);
+    const r = await restoreBackup({ format: 'chessquest-backup', schemaVersion: 2, exportedAt: '', tables: { exercises: [exerciseFixture('g')] } });
+    expect(r.ok).toBe(true);
+    expect(await listGames()).toHaveLength(1);
+    expect(await getExercise('ex1')).toBeDefined();
+  });
+
+  it('restores a backup from an older schema with a pre-tree exercise', async () => {
+    const legacy = { ...exerciseFixture('g'), kind: undefined, goal: undefined, tree: undefined };
+    const r = await restoreBackup({ format: 'chessquest-backup', schemaVersion: 1, exportedAt: '', tables: { exercises: [JSON.parse(JSON.stringify(legacy))] } });
+    expect(r.ok).toBe(true);
+    const stored = await getExercise('ex1');
+    expect(stored?.tree).toBeUndefined();
+    expect(normalizeExercise(stored!).tree.accepted.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a backup game whose start position is impossible', () => {
+    const v = validateBackup({ format: 'chessquest-backup', schemaVersion: 2, tables: { games: [{ id: 'x', moves: [], startFen: '8/8/8/3k4/8/8/8/K6Q w - - 0 1' }] } });
+    expect(v.ok).toBe(false);
   });
 
   it('clears data selectively', async () => {

@@ -10,6 +10,7 @@ import { attemptStats, openingStudy, themeCounts, themePerformance, toAnalyzedIn
 import { THEME_LABEL } from '../../services/pedagogy/concepts';
 import { findOpening } from '../../services/openings/library';
 import { RecentPerformanceChart } from './RecentPerformanceChart';
+import { SkillStates } from './SkillStates';
 
 function useDashboardData() {
   return useLiveQuery(async () => {
@@ -106,12 +107,14 @@ export function DashboardPage() {
 
       <div className="stats">
         <div className="stat">
-          <span className="stat-label">Partidas importadas</span>
-          <span className="stat-value" data-testid="stat-games">{games.length}</span>
-          <span className="stat-note">{inputs.length} analisada(s)</span>
+          <span className="stat-label">Partidas analisadas</span>
+          <span className="stat-value" data-testid="stat-analyzed">{inputs.length}</span>
+          <span className="stat-note">
+            de <span data-testid="stat-games">{games.length}</span> importada(s)
+          </span>
         </div>
         <div className="stat">
-          <span className="stat-label">Exercícios concluídos</span>
+          <span className="stat-label">Exercícios resolvidos</span>
           <span className="stat-value">{solved}</span>
           <span className="stat-note">de {exercises.length} disponíveis</span>
         </div>
@@ -151,8 +154,8 @@ export function DashboardPage() {
           ) : (
             <div className="bar-list">
               {topErrors.map((t) => (
-                <div key={t.theme} className="item">
-                  <span>{THEME_LABEL[t.theme]}</span>
+                <div key={t.key} className="item">
+                  <span>{t.label}</span>
                   <span className="mono muted">{t.count}</span>
                   <div className="bar">
                     <span style={{ width: `${(t.count / maxErr) * 100}%`, background: 'var(--mistake)' }} />
@@ -163,6 +166,8 @@ export function DashboardPage() {
           )}
         </section>
       </div>
+
+      <SkillStates profile={profile} />
 
       <div className="grid-3">
         <section className="panel">

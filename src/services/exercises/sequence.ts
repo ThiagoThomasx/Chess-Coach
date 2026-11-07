@@ -1,6 +1,6 @@
 import type { AcceptableMove, Color, Exercise, ExerciseGoal, ExerciseKind, PositionAnalysis, ReplyBranch, Score, SolutionNode, Theme } from '../../types/domain';
 import { applyUci, sideToMove, terminalState, uciToSan } from '../chess/position';
-import { settledSwing } from '../chess/material';
+import { gainPlies, settledSwing } from '../chess/material';
 import { matedScore, winPercentFor } from '../analysis/evaluation';
 import type { EngineLike } from '../analysis/gameAnalyzer';
 
@@ -9,6 +9,20 @@ export const MAX_SEQUENCE_MOVES = 4;
 export const MAX_REPLY_BRANCHES = 2;
 /** Equivalent first moves expanded at the root (deeper alternatives are validated live). */
 export const MAX_ROOT_EXPANSIONS = 2;
+/**
+ * Defender replies count as equally good only within this many centipawns of
+ * the best defense: win% saturates in lost positions, so a reply that drops a
+ * piece (or speeds up the mate) would otherwise look "equivalent".
+ */
+export const DEFENSE_CP_MARGIN = 50;
+/**
+ * Above the tolerance, a loss up to this many points is too close to call
+ * with a depth-limited search: the move is re-checked deeper and, if it stays
+ * in this band, the verdict is "uncertain" instead of "wrong".
+ */
+export const UNCERTAIN_MARGIN = 3;
+/** Extra depth for the re-check of a borderline move. */
+const RECHECK_EXTRA_DEPTH = 4;
 
 export interface TreeOptions {
   depth: number;
@@ -43,6 +57,26 @@ export function acceptedFrom(a: PositionAnalysis, tolerance: number, mateLimit?:
     .map((l) => ({ uci: l.pv[0] as string, san: uciToSan(a.fen, l.pv[0] as string) ?? (l.pv[0] as string), score: l.score }));
 }
 
+/**
+ * The opponent's best defenses: the longest mate when being mated, otherwise
+ * replies within DEFENSE_CP_MARGIN (and the win% tolerance) of the best one.
+ */
+export function defenseRepliesFrom(a: PositionAnalysis, tolerance: number): AcceptableMove[] {
+  const side = stm(a.fen);
+  const best = a.lines[0];
+  if (!best) return [];
+  const bestPov = povValue(best.score, side);
+  return acceptedFrom(a, tolerance).filter((m) => {
+    if (best.score.kind === 'mate' || m.score.kind === 'mate') return m.score.kind === best.score.kind && povValue(m.score, side) === bestPov;
+    return bestPov - povValue(m.score, side) <= DEFENSE_CP_MARGIN;
+  });
+}
+
+/** Score value from `side`'s point of view (mates keep their signed distance). */
+function povValue(score: Score, side: Color): number {
+  return side === 'w' ? score.value : -score.value;
+}
+
 /** Score of a position without a search when the game is over (White POV). */
 function terminalScore(fen: string): Score | null {
   const t = terminalState(fen);
@@ -56,7 +90,7 @@ function terminalScore(fen: string): Score | null {
  * the user moves needed to reach a settled material gain in the best line,
  * the theme, and the win expectancy.
  */
-export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme: Theme, tolerance: number): ExerciseGoal {
+export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme: Theme, tolerance: number, motifSide?: 'own' | 'opponent'): ExerciseGoal {
   const me = stm(fen);
   const targetWin = winPercentFor(best.score, me);
   if (best.score.kind === 'mate' && (me === 'w' ? best.score.value > 0 : best.score.value < 0)) {
@@ -64,10 +98,13 @@ export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme
     return { kind: 'mate', maxUserMoves: Math.min(n, MAX_SEQUENCE_MOVES), targetWin, mateIn: n };
   }
   const defensive: Theme[] = ['allowed_mate', 'mate_threat', 'defense', 'ignored_threat', 'hanging_piece', 'removed_defender', 'pin'];
-  if (defensive.includes(theme)) return { kind: 'defense', maxUserMoves: 1, targetWin };
+  // The opponent's tactic is something to prevent: the task is the defense.
+  if (motifSide === 'opponent' || defensive.includes(theme)) return { kind: 'defense', maxUserMoves: 1, targetWin };
   const swing = settledSwing(fen, best.pv, me);
-  if (swing.settled && swing.delta >= 2) {
-    const userMoves = Math.max(1, Math.min(3, Math.ceil(swing.plies / 2)));
+  const toGain = gainPlies(fen, best.pv, me);
+  if (swing.settled && swing.delta >= 2 && toGain !== null) {
+    // Length up to where the gain happens, not the measuring horizon.
+    const userMoves = Math.max(1, Math.min(3, Math.ceil(toGain / 2)));
     return { kind: userMoves > 1 ? 'sequence' : 'single', maxUserMoves: userMoves, targetWin };
   }
   if (targetWin >= 80 && targetWin - tolerance >= 70) return { kind: 'conversion', maxUserMoves: 2, targetWin };
@@ -80,11 +117,16 @@ export function goalFor(fen: string, best: { score: Score; pv: string[] }, theme
  * into up to MAX_REPLY_BRANCHES equally good opponent defenses, recursively,
  * until the goal's move limit. Other accepted moves are validated live.
  */
-export async function buildSolutionTree(engine: EngineLike, fen: string, goal: ExerciseGoal, opts: TreeOptions): Promise<SolutionNode> {
+export async function buildSolutionTree(engine: EngineLike, fen: string, goal: ExerciseGoal, opts: TreeOptions, preferredFirst?: string): Promise<SolutionNode> {
   const isMate = goal.kind === 'mate';
-  const node = async (pos: string, movesLeft: number, isRoot: boolean): Promise<SolutionNode> => {
+  const limit = Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES);
+  // Mate budget can exceed the move limit (mate in 6 is played for 4 moves).
+  const firstBudget = mateBudget(goal, 0);
+  const node = async (pos: string, movesLeft: number, budget: number, isRoot: boolean): Promise<SolutionNode> => {
     const a = await engine.analyze({ fen: pos, depth: opts.depth, multiPv: opts.multiPv });
-    const accepted = acceptedFrom(a, opts.tolerance, isMate ? movesLeft : undefined);
+    const found = acceptedFrom(a, opts.tolerance, isMate ? budget : undefined);
+    // Tied moves can come back reordered: keep the analysis main move first when it is still accepted.
+    const accepted = isRoot && preferredFirst ? preferFirst(found, preferredFirst) : found;
     const out: SolutionNode = { fen: pos, accepted, replies: {}, depth: a.depth };
     if (movesLeft <= 1) return out;
     for (const move of accepted.slice(0, isRoot ? MAX_ROOT_EXPANSIONS : 1)) {
@@ -95,16 +137,26 @@ export async function buildSolutionTree(engine: EngineLike, fen: string, goal: E
       }
       const opp = await engine.analyze({ fen: afterUser, depth: opts.depth, multiPv: MAX_REPLY_BRANCHES });
       const branches: ReplyBranch[] = [];
-      for (const r of acceptedFrom(opp, opts.tolerance).slice(0, MAX_REPLY_BRANCHES)) {
+      for (const r of defenseRepliesFrom(opp, opts.tolerance).slice(0, MAX_REPLY_BRANCHES)) {
         const next = applyUci(afterUser, r.uci);
         if (!next) continue;
-        branches.push({ uci: r.uci, san: r.san, score: r.score, next: terminalScore(next) ? null : await node(next, movesLeft - 1, false) });
+        branches.push({ uci: r.uci, san: r.san, score: r.score, next: terminalScore(next) ? null : await node(next, movesLeft - 1, budget - 1, false) });
       }
       out.replies[move.uci] = branches;
     }
     return out;
   };
-  return node(fen, Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES), true);
+  return node(fen, limit, firstBudget, true);
+}
+
+function preferFirst(moves: AcceptableMove[], uci: string): AcceptableMove[] {
+  const i = moves.findIndex((m) => m.uci === uci);
+  return i <= 0 ? moves : [moves[i] as AcceptableMove, ...moves.slice(0, i), ...moves.slice(i + 1)];
+}
+
+/** Solver moves within which a mate goal must still force mate, after `userMoves` moves. */
+export function mateBudget(goal: ExerciseGoal, userMoves: number): number {
+  return (goal.mateIn ?? Math.min(goal.maxUserMoves, MAX_SEQUENCE_MOVES)) - userMoves;
 }
 
 /** Converts a pre-v2 exercise (single line) into the tree representation. */
@@ -134,7 +186,10 @@ export function normalizeExercise(ex: Exercise): Exercise & { kind: ExerciseKind
     maxUserMoves: userMoves,
     targetWin: winPercentFor(ex.bestMove.score, ex.sideToMove),
   };
-  return { ...ex, kind: ex.kind ?? goal.kind, goal, tree: ex.tree ?? legacyTree(ex) };
+  const tree = ex.tree ?? legacyTree(ex);
+  // Trees stored before the mate-budget fix can have an empty root (mate in 5+).
+  const safeTree = tree.accepted.length || !ex.acceptableMoves.length ? tree : { ...tree, accepted: ex.acceptableMoves };
+  return { ...ex, kind: ex.kind ?? goal.kind, goal, tree: safeTree };
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +205,8 @@ export type MoveVerdict =
   | { kind: 'illegal'; message: string }
   | { kind: 'rejected'; message: string; winLoss?: number }
   | { kind: 'unverifiable'; message: string }
+  /** Too close to the tolerance to call: nothing is recorded. */
+  | { kind: 'uncertain'; message: string; winLoss: number }
   | { kind: 'solved'; message: string; fen: string }
   | { kind: 'continue'; message: string; reply: { uci: string; san: string }; state: SolveState };
 
@@ -165,34 +222,94 @@ export interface SolveDeps {
 
 const randomPick = (n: number) => Math.floor(Math.random() * n);
 
+/** Win% of the best move in the current position: stored, or searched when the node has none. */
+async function referenceWin(state: SolveState, solver: Color, deps: SolveDeps): Promise<number | null> {
+  const stored = state.node.accepted[0];
+  if (stored) return winPercentFor(stored.score, solver);
+  if (!deps.engine) return null;
+  try {
+    const r = await deps.engine.analyze({ fen: state.fen, depth: deps.depth, multiPv: 1 });
+    const line = r.lines[0];
+    return line && r.complete ? winPercentFor(line.score, solver) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Loss of the user's move against the best one, and the solver's mate distance after it (root-move count). */
+interface Measured {
+  loss: number;
+  score: Score;
+  /** Solver moves to mate counting the user's move, or null when not mating. */
+  mateMoves: number | null;
+}
+
+/**
+ * Comparable measurement: one search from the current position restricted to
+ * the reference move and the user's move (UCI searchmoves), so both scores
+ * come from the same search at the same depth. Null when the engine did not
+ * return the user's line (the caller falls back to searching the position after it).
+ */
+async function measureSameSearch(state: SolveState, uci: string, solver: Color, deps: SolveDeps & { engine: EngineLike }, depth: number): Promise<Measured | null> {
+  const ref = state.node.accepted[0]?.uci;
+  if (!ref) return null;
+  const r = await deps.engine.analyze({ fen: state.fen, depth, multiPv: 2, searchMoves: [ref, uci] });
+  if (!r.complete) return null;
+  const mine = r.lines.find((l) => l.pv[0] === uci);
+  const theirs = r.lines.find((l) => l.pv[0] === ref);
+  if (!mine || !theirs) return null;
+  const bestWin = winPercentFor(theirs.score, solver);
+  return { loss: Math.max(0, bestWin - winPercentFor(mine.score, solver)), score: mine.score, mateMoves: mateFor(mine.score, solver) };
+}
+
+/** Fallback measurement: search the position after the move and compare with the stored reference. */
+async function measureAfter(after: string, bestWin: number, solver: Color, deps: SolveDeps & { engine: EngineLike }): Promise<Measured | null> {
+  const r = await deps.engine.analyze({ fen: after, depth: deps.depth, multiPv: 1 });
+  const line = r.lines[0];
+  if (!line || !r.complete) return null;
+  const m = mateFor(line.score, solver);
+  return { loss: Math.max(0, bestWin - winPercentFor(line.score, solver)), score: line.score, mateMoves: m === null ? null : m + 1 };
+}
+
 /** Win% for the solver after its move, from the stored node or a fresh search. */
 async function judge(state: SolveState, uci: string, after: string, solver: Color, deps: SolveDeps): Promise<{ ok: true; score: Score } | { ok: false; verdict: MoveVerdict }> {
   const known = state.node.accepted.find((m) => m.uci === uci);
   if (known) return { ok: true, score: known.score };
-  const bestRef = state.node.accepted[0];
   const san = uciToSan(state.fen, uci) ?? uci;
   const term = terminalScore(after);
-  const bestWin = bestRef ? winPercentFor(bestRef.score, solver) : null;
+  const bestWin = await referenceWin(state, solver, deps);
   if (term && bestWin !== null) {
     const loss = bestWin - winPercentFor(term, solver);
     return loss <= deps.tolerance ? { ok: true, score: term } : { ok: false, verdict: { kind: 'rejected', message: `${san} termina a partida sem atingir o objetivo.`, winLoss: loss } };
   }
-  if (!deps.engine || bestWin === null) return { ok: false, verdict: { kind: 'unverifiable', message: `${san} não está entre os lances calculados e o motor não está disponível para verificá-lo.` } };
-  let r: PositionAnalysis;
+  if (!deps.engine) return { ok: false, verdict: { kind: 'unverifiable', message: `${san} não está entre os lances calculados e o motor não está disponível para verificá-lo.` } };
+  if (bestWin === null) return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível calcular a referência desta posição para verificar ${san}; tente novamente.` } };
+  const engineDeps = { ...deps, engine: deps.engine };
+  const measure = async (depth: number): Promise<Measured | null> => (await measureSameSearch(state, uci, solver, engineDeps, depth)) ?? (await measureAfter(after, bestWin, solver, engineDeps));
+  let m: Measured | null;
   try {
-    r = await deps.engine.analyze({ fen: after, depth: deps.depth, multiPv: 1 });
+    m = await measure(deps.depth);
+    // Borderline: re-check deeper before calling a reasonable move wrong.
+    if (m && m.loss > deps.tolerance && m.loss <= deps.tolerance + UNCERTAIN_MARGIN) m = (await measure(deps.depth + RECHECK_EXTRA_DEPTH)) ?? m;
   } catch {
     return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível verificar ${san} com o motor agora.` } };
   }
-  const line = r.lines[0];
-  if (!line || !r.complete) return { ok: false, verdict: { kind: 'unverifiable', message: `A verificação de ${san} não terminou; tente novamente.` } };
-  const loss = Math.max(0, bestWin - winPercentFor(line.score, solver));
-  const movesLeftAfter = deps.mateMovesLeft !== undefined ? deps.mateMovesLeft - 1 : undefined;
-  if (movesLeftAfter !== undefined && (mateFor(line.score, solver) ?? Infinity) > movesLeftAfter) {
+  if (!m) return { ok: false, verdict: { kind: 'unverifiable', message: `A verificação de ${san} não terminou; tente novamente.` } };
+  if (deps.mateMovesLeft !== undefined && (m.mateMoves ?? Infinity) > deps.mateMovesLeft) {
     return { ok: false, verdict: { kind: 'rejected', message: `${san} não mantém o mate forçado dentro do limite do exercício.` } };
   }
-  if (loss <= deps.tolerance) return { ok: true, score: line.score };
-  return { ok: false, verdict: { kind: 'rejected', message: `${san} não resolve: a expectativa cai ${loss.toFixed(1)} p.p. em relação ao melhor lance (tolerância ${deps.tolerance}).`, winLoss: loss } };
+  if (m.loss <= deps.tolerance) return { ok: true, score: m.score };
+  if (m.loss <= deps.tolerance + UNCERTAIN_MARGIN) {
+    return {
+      ok: false,
+      verdict: {
+        kind: 'uncertain',
+        message: `${san} fica ${m.loss.toFixed(1)} p.p. abaixo do melhor lance, perto do limite de ${deps.tolerance} p.p.: o motor não dá confiança suficiente para considerá-lo certo ou errado. A tentativa não será registrada.`,
+        winLoss: m.loss,
+      },
+    };
+  }
+  return { ok: false, verdict: { kind: 'rejected', message: `${san} não resolve: a expectativa cai ${m.loss.toFixed(1)} p.p. em relação ao melhor lance (tolerância ${deps.tolerance}).`, winLoss: m.loss } };
 }
 
 /**
@@ -208,14 +325,15 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
   if (terminalState(after) === 'checkmate') return { kind: 'solved', message: `${san} — xeque-mate!`, fen: after };
 
   const limit = Math.min(ex.goal.maxUserMoves, MAX_SEQUENCE_MOVES);
-  const judgeDeps = ex.goal.kind === 'mate' ? { ...deps, mateMovesLeft: limit - state.userMoves } : deps;
+  const isMate = ex.goal.kind === 'mate';
+  const judgeDeps = isMate ? { ...deps, mateMovesLeft: mateBudget(ex.goal, state.userMoves) } : deps;
   const verdict = await judge(state, uci, after, solver, judgeDeps);
   if (!verdict.ok) return verdict.verdict;
   const userMoves = state.userMoves + 1;
   const isMain = state.node.accepted[0]?.uci === uci;
   const altNote = isMain ? '' : ' (alternativa equivalente aceita)';
   if (userMoves >= limit) {
-    const done = ex.goal.kind === 'mate' ? `${san}${altNote}: o mate continua forçado dentro do limite do exercício.` : `${san}${altNote} — correto!`;
+    const done = isMate ? `${san}${altNote}: o mate continua forçado dentro do limite do exercício.` : `${san}${altNote} — correto!`;
     return { kind: 'solved', message: done, fen: after };
   }
 
@@ -232,13 +350,13 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
   if (!deps.engine) return { kind: 'solved', message: `${san}${altNote} — aceito. A continuação desta alternativa não pode ser verificada sem o motor.`, fen: after };
   try {
     const opp = await deps.engine.analyze({ fen: after, depth: deps.depth, multiPv: MAX_REPLY_BRANCHES });
-    const replies = acceptedFrom(opp, deps.tolerance);
+    const replies = defenseRepliesFrom(opp, deps.tolerance);
     const pick = replies[Math.min(replies.length - 1, choose(replies.length))];
     if (!pick) return { kind: 'solved', message: `${san}${altNote} — correto!`, fen: after };
     const afterReply = applyUci(after, pick.uci) as string;
     if (terminalScore(afterReply)) return { kind: 'solved', message: `${san}${altNote} — correto!`, fen: afterReply };
     const next = await deps.engine.analyze({ fen: afterReply, depth: deps.depth, multiPv: 3 });
-    const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, ex.goal.kind === 'mate' ? limit - userMoves : undefined), replies: {}, depth: next.depth };
+    const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, isMate ? mateBudget(ex.goal, userMoves) : undefined), replies: {}, depth: next.depth };
     return { kind: 'continue', message: `${san}${altNote} — correto. O adversário responde ${pick.san}.`, reply: { uci: pick.uci, san: pick.san }, state: { node, userMoves, fen: afterReply } };
   } catch {
     return { kind: 'solved', message: `${san}${altNote} — aceito. Não foi possível calcular a resposta do adversário agora.`, fen: after };

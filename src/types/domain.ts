@@ -172,7 +172,9 @@ export type Theme =
   | 'deflection'
   | 'losing_capture'
   | 'combination'
-  | 'conversion';
+  | 'conversion'
+  /** A capture or check whose consequences the engine line refutes, without a recognized motif. */
+  | 'unsound_forcing';
 
 export interface SrsState {
   box: number;
@@ -228,6 +230,8 @@ export interface Exercise {
   sideToMove: Color;
   objective: string;
   theme: Theme;
+  /** Whose tactic the theme is: the player's missed one or the opponent's (then the task is a defense). */
+  motifSide?: 'own' | 'opponent';
   skill: Skill;
   bestMove: AcceptableMove;
   acceptableMoves: AcceptableMove[];
@@ -310,6 +314,8 @@ export interface Opening {
   tacticalIdeas: string[];
   commonMistakes: string[];
   custom?: boolean;
+  /** Plies a game must follow before it is named after this opening (default 4). */
+  definingPly?: number;
 }
 
 export interface RepertoireEntry {

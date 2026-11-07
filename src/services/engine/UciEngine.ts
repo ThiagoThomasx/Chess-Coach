@@ -1,5 +1,5 @@
 import type { EngineLine, PositionAnalysis } from '../../types/domain';
-import { sideToMove } from '../chess/position';
+import { positionProblem, sideToMove } from '../chess/position';
 import { toWhitePov } from '../analysis/evaluation';
 import { parseBestMove, parseInfoLine } from './uci';
 
@@ -26,7 +26,7 @@ export type EngineState = 'idle' | 'initializing' | 'ready' | 'error' | 'termina
 export class EngineError extends Error {
   constructor(
     message: string,
-    readonly code: 'init_failed' | 'timeout' | 'terminated' | 'cancelled' | 'transport',
+    readonly code: 'init_failed' | 'timeout' | 'terminated' | 'cancelled' | 'transport' | 'invalid_position',
   ) {
     super(message);
     this.name = 'EngineError';
@@ -41,6 +41,12 @@ interface Job {
 }
 
 const INIT_TIMEOUT_MS = 20_000;
+/** A search that prints nothing for this long is considered stuck (Stockfish reports at least every few seconds). */
+export const STALL_TIMEOUT_MS = 30_000;
+
+export interface UciEngineOptions {
+  stallTimeoutMs?: number;
+}
 
 /**
  * UCI protocol driver. Owns a single engine instance and serializes analysis
@@ -56,9 +62,16 @@ export class UciEngine {
   private initPromise: Promise<void> | null = null;
   private stopRequested = false;
   private listeners = new Set<(s: EngineState) => void>();
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private readonly stallTimeoutMs: number;
   name = 'Stockfish';
 
-  constructor(private readonly createTransport: () => EngineTransport) {}
+  constructor(
+    private readonly createTransport: () => EngineTransport,
+    opts: UciEngineOptions = {},
+  ) {
+    this.stallTimeoutMs = opts.stallTimeoutMs ?? STALL_TIMEOUT_MS;
+  }
 
   getState(): EngineState {
     return this.state;
@@ -96,12 +109,16 @@ export class UciEngine {
       }
       this.transport = t;
       const timer = setTimeout(() => fail(new Error('tempo esgotado aguardando "uciok"')), INIT_TIMEOUT_MS);
+      // Messages from a transport that was already replaced are ignored.
       t.onError((err) => {
+        if (this.transport !== t) return;
         clearTimeout(timer);
         if (this.state === 'initializing') fail(err);
         else this.handleFatal(err);
       });
-      t.onLine((line) => this.handleLine(line));
+      t.onLine((line) => {
+        if (this.transport === t) this.handleLine(line);
+      });
       this.waitFor((l) => l.startsWith('id name '), () => undefined, (l) => {
         this.name = l.slice('id name '.length).trim();
       });
@@ -150,6 +167,7 @@ export class UciEngine {
     }
     const job = this.current;
     if (!job) return;
+    this.armWatchdog();
     if (line.startsWith('info ')) {
       const info = parseInfoLine(line);
       if (!info || !info.score || !info.pv || info.depth === undefined || info.bound) return;
@@ -166,6 +184,7 @@ export class UciEngine {
     if (line.startsWith('bestmove')) {
       const bm = parseBestMove(line);
       const result = { ...this.snapshot(job, !this.stopRequested), ...(bm?.best ? { bestMove: bm.best } : {}) };
+      this.clearWatchdog();
       this.current = null;
       this.stopRequested = false;
       if (job.cancelled) job.reject(new EngineError('Análise cancelada', 'cancelled'));
@@ -191,16 +210,43 @@ export class UciEngine {
   }
 
   private handleFatal(err: Error): void {
-    this.setState('error');
-    const pending = [this.current, ...this.queue].filter((j): j is Job => j !== null);
+    this.recover(new EngineError(`O motor falhou durante a análise e foi reiniciado (${err.message}).`, 'transport'));
+  }
+
+  /**
+   * Fails the running job, discards the (crashed or stuck) worker and, when
+   * jobs are waiting, starts a fresh one so the queue keeps going.
+   */
+  private recover(err: EngineError): void {
+    this.clearWatchdog();
+    const job = this.current;
     this.current = null;
-    this.queue.length = 0;
-    pending.forEach((j) => j.reject(new EngineError(`Erro no motor: ${err.message}`, 'transport')));
+    this.stopRequested = false;
+    job?.reject(err);
+    const t = this.transport;
+    this.transport = null;
+    this.initPromise = null;
+    t?.terminate();
+    this.setState('error');
+    if (this.queue.length) this.init().catch((e: Error) => this.rejectAll(e));
+  }
+
+  private armWatchdog(): void {
+    this.clearWatchdog();
+    this.watchdog = setTimeout(() => this.recover(new EngineError('O motor parou de responder nesta posição e foi reiniciado.', 'timeout')), this.stallTimeoutMs);
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = null;
   }
 
   /** Queues an analysis. Resolves with the final result (complete=false if stopped early). */
   analyze(req: AnalyzeRequest): Promise<PositionAnalysis> {
     if (this.state === 'terminated') return Promise.reject(new EngineError('Motor encerrado', 'terminated'));
+    // Impossible positions can crash the engine: refuse them before they reach it.
+    const problem = positionProblem(req.fen);
+    if (problem) return Promise.reject(new EngineError(`Posição impossível (${problem}); não foi enviada ao motor.`, 'invalid_position'));
     return new Promise((resolve, reject) => {
       this.queue.push({ req, resolve, reject, cancelled: false });
       if (this.state === 'ready') this.pump();
@@ -233,6 +279,7 @@ export class UciEngine {
     const limits = req.movetimeMs ? `movetime ${req.movetimeMs}` : `depth ${req.depth ?? 16}`;
     const sm = req.searchMoves?.length ? ` searchmoves ${req.searchMoves.join(' ')}` : '';
     t.send(`go ${limits}${sm}`);
+    this.armWatchdog();
   }
 
   /** Stops the running search; its promise resolves with complete=false. */
@@ -258,6 +305,7 @@ export class UciEngine {
   }
 
   terminate(): void {
+    this.clearWatchdog();
     this.cancelAll();
     this.rejectAll(new EngineError('Motor encerrado', 'terminated'));
     if (this.current) {

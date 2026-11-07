@@ -1,3 +1,4 @@
+import { Chess } from 'chess.js';
 import type { Opening } from '../../types/domain';
 
 /**
@@ -9,10 +10,11 @@ import type { Opening } from '../../types/domain';
 export const OPENINGS: readonly Opening[] = [
   {
     id: 'italian',
-    name: 'Abertura Italiana (Giuoco Piano)',
+    name: 'Abertura Italiana',
     eco: 'C50–C54',
     side: 'w',
-    mainLine: { id: 'main', name: 'Linha principal com c3 e d4', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd4', 'exd4', 'cxd4', 'Bb4+'] },
+    definingPly: 5, // 3.Bc4
+    mainLine: { id: 'main', name: 'Giuoco Piano: linha principal com c3 e d4', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd4', 'exd4', 'cxd4', 'Bb4+'] },
     variations: [
       { id: 'pianissimo', name: 'Giuoco Pianissimo (d3)', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'c3', 'Nf6', 'd3', 'd6', 'O-O', 'O-O'] },
       { id: 'two-knights', name: 'Defesa dos Dois Cavalos (4.Ng5)', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Nf6', 'Ng5', 'd5', 'exd5', 'Na5'], comment: 'Após 5...Nxd5?! as brancas têm 6.Nxf7 ou 6.d4 com ataque perigoso; 5...Na5 é a resposta principal.' },
@@ -26,6 +28,7 @@ export const OPENINGS: readonly Opening[] = [
     name: 'Ruy López (Abertura Espanhola)',
     eco: 'C60–C99',
     side: 'w',
+    definingPly: 5, // 3.Bb5
     mainLine: { id: 'main', name: 'Fechada', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O', 'Be7', 'Re1', 'b5', 'Bb3', 'd6', 'c3', 'O-O'] },
     variations: [
       { id: 'exchange', name: 'Variante das Trocas', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Bxc6', 'dxc6', 'O-O'] },
@@ -40,6 +43,7 @@ export const OPENINGS: readonly Opening[] = [
     name: 'Gambito da Dama Recusado',
     eco: 'D30–D69',
     side: 'w',
+    definingPly: 4, // 2…e6
     mainLine: { id: 'main', name: 'Linha ortodoxa', moves: ['d4', 'd5', 'c4', 'e6', 'Nc3', 'Nf6', 'Bg5', 'Be7', 'e3', 'O-O', 'Nf3', 'h6', 'Bh4'] },
     variations: [
       { id: 'exchange', name: 'Variante das Trocas', moves: ['d4', 'd5', 'c4', 'e6', 'Nc3', 'Nf6', 'cxd5', 'exd5', 'Bg5', 'c6', 'e3'] },
@@ -53,6 +57,7 @@ export const OPENINGS: readonly Opening[] = [
     name: 'Sistema Londres',
     eco: 'D02 / A46',
     side: 'w',
+    definingPly: 3, // 2.Bf4
     mainLine: { id: 'main', name: 'Configuração principal', moves: ['d4', 'd5', 'Bf4', 'Nf6', 'e3', 'e6', 'Nf3', 'c5', 'c3', 'Nc6', 'Nbd2', 'Bd6', 'Bg3'] },
     variations: [{ id: 'kid-setup', name: 'Contra fianqueto do rei', moves: ['d4', 'Nf6', 'Bf4', 'g6', 'e3', 'Bg7', 'Nf3', 'O-O', 'Be2', 'd6', 'h3'] }],
     goals: ['Estrutura sólida com d4, e3 e c3', 'Desenvolver o bispo de c1 antes de e3', 'Planos claros com Ne5 e ataque no flanco do rei'],
@@ -64,6 +69,7 @@ export const OPENINGS: readonly Opening[] = [
     name: 'Defesa Siciliana — Najdorf',
     eco: 'B90–B99',
     side: 'b',
+    definingPly: 10, // 5…a6
     mainLine: { id: 'main', name: 'Najdorf principal', moves: ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6', 'Nc3', 'a6'] },
     variations: [
       { id: 'english-attack', name: 'Ataque Inglês (6.Be3)', moves: ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6', 'Nc3', 'a6', 'Be3', 'e5', 'Nb3', 'Be6'] },
@@ -78,6 +84,7 @@ export const OPENINGS: readonly Opening[] = [
     name: 'Defesa Francesa — Avanço',
     eco: 'C02',
     side: 'b',
+    definingPly: 5, // 3.e5
     mainLine: { id: 'main', name: 'Avanço com ...Qb6', moves: ['e4', 'e6', 'd4', 'd5', 'e5', 'c5', 'c3', 'Nc6', 'Nf3', 'Qb6'] },
     variations: [{ id: 'bd7', name: 'Com ...Bd7', moves: ['e4', 'e6', 'd4', 'd5', 'e5', 'c5', 'c3', 'Nc6', 'Nf3', 'Bd7'] }],
     goals: ['Atacar a base da cadeia de peões (d4) com ...c5', 'Aumentar a pressão em d4 com ...Nc6 e ...Qb6', 'Lutar contra o espaço das brancas'],
@@ -86,9 +93,10 @@ export const OPENINGS: readonly Opening[] = [
   },
   {
     id: 'caro-kann',
-    name: 'Defesa Caro-Kann — Clássica',
-    eco: 'B18–B19',
+    name: 'Defesa Caro-Kann',
+    eco: 'B10–B19',
     side: 'b',
+    definingPly: 4, // 2…d5
     mainLine: { id: 'main', name: 'Clássica com ...Bf5', moves: ['e4', 'c6', 'd4', 'd5', 'Nc3', 'dxe4', 'Nxe4', 'Bf5', 'Ng3', 'Bg6', 'h4', 'h6'] },
     variations: [{ id: 'advance', name: 'Variante do Avanço', moves: ['e4', 'c6', 'd4', 'd5', 'e5', 'Bf5', 'Nf3', 'e6', 'Be2'] }],
     goals: ['Disputar o centro com ...d5 apoiado por ...c6', 'Desenvolver o bispo de c8 antes de ...e6', 'Estrutura sólida e final favorável'],
@@ -100,10 +108,16 @@ export const OPENINGS: readonly Opening[] = [
     name: 'Defesa Escandinava',
     eco: 'B01',
     side: 'b',
+    definingPly: 2, // 1…d5
     mainLine: { id: 'main', name: 'Linha com ...Qa5', moves: ['e4', 'd5', 'exd5', 'Qxd5', 'Nc3', 'Qa5', 'd4', 'Nf6', 'Nf3', 'c6'] },
-    variations: [{ id: 'qd6', name: 'Linha com ...Qd6', moves: ['e4', 'd5', 'exd5', 'Qxd5', 'Nc3', 'Qd6', 'd4', 'Nf6', 'Nf3', 'a6'] }],
+    variations: [{
+        id: 'qd6',
+        name: 'Linha com ...Qd6',
+        moves: ['e4', 'd5', 'exd5', 'Qxd5', 'Nc3', 'Qd6', 'd4', 'Nf6', 'Nf3', 'a6'],
+        comment: 'Jogável, mas o motor do ChessQuest avalia a posição final com vantagem perceptível das brancas (cerca de um peão em profundidade 16): a ideia é um jogo simples, com ...a6 preparando ...b5 e ...Bb7, não a igualdade imediata.',
+      }],
     goals: ['Eliminar o peão e4 imediatamente', 'Recolocar a dama em casa segura após Nc3', 'Desenvolvimento simples com ...c6, ...Bf5 ou ...Bg4'],
-    tacticalIdeas: ['Em a5, a dama crava o cavalo de c3 quando o bispo vai a b4', '...c6 cria uma casa de retirada para a dama em c7'],
+    tacticalIdeas: ['Com a dama em a5, ...Bb4 crava o cavalo de c3, e a dama aumenta a pressão sobre ele', '...c6 cria uma casa de retirada para a dama em c7'],
     commonMistakes: ['Deixar a dama no centro, onde é atacada com ganho de tempo', 'Atrasar o desenvolvimento do flanco do rei'],
   },
 ];
@@ -112,15 +126,53 @@ export function findOpening(id: string, extra: readonly Opening[] = []): Opening
   return [...OPENINGS, ...extra].find((o) => o.id === id);
 }
 
-/** Longest library line that is a prefix of the game's moves (for "abertura identificada"). */
-export function matchOpening(moves: readonly string[], extra: readonly Opening[] = []): { opening: Opening; lineId: string; depth: number } | null {
-  let best: { opening: Opening; lineId: string; depth: number } | null = null;
-  for (const o of [...OPENINGS, ...extra]) {
-    for (const line of [o.mainLine, ...o.variations]) {
-      let d = 0;
-      while (d < line.moves.length && d < moves.length && line.moves[d] === moves[d]) d++;
-      if (d >= 4 && (!best || d > best.depth)) best = { opening: o, lineId: line.id, depth: d };
+/** Plies a game must follow before an opening is named, unless the opening sets its own. */
+export const DEFAULT_DEFINING_PLY = 4;
+
+/** Position keys (FEN without move counters) after each ply; stops at the first illegal move. */
+function positionKeys(moves: readonly string[]): string[] {
+  const chess = new Chess();
+  const keys = [key(chess.fen())];
+  for (const san of moves) {
+    try {
+      chess.move(san);
+    } catch {
+      break;
     }
+    keys.push(key(chess.fen()));
+  }
+  return keys;
+}
+
+const key = (fen: string): string => fen.split(' ').slice(0, 4).join(' ');
+const lineKeys = new Map<string, string[]>();
+function keysOfLine(moves: readonly string[]): string[] {
+  const id = moves.join(' ');
+  const cached = lineKeys.get(id);
+  if (cached) return cached;
+  const keys = positionKeys(moves);
+  lineKeys.set(id, keys);
+  return keys;
+}
+
+/**
+ * Deepest library line position reached by the game (for "abertura
+ * identificada"), compared by position so that transpositions count
+ * (1.d4 Nf6 2.Bf4 d5 is the London). The game must reach the opening's
+ * defining position: 1.e4 e5 2.Nf3 Nc6 3.d4 is not named after an opening
+ * that needs 3.Bc4 or 3.Bb5.
+ */
+export function matchOpening(moves: readonly string[], extra: readonly Opening[] = []): { opening: Opening; lineId: string; depth: number } | null {
+  const lines = [...OPENINGS, ...extra].flatMap((o) => [o.mainLine, ...o.variations].map((line) => ({ o, line })));
+  const longest = Math.max(0, ...lines.map((l) => l.line.moves.length));
+  // A transposition reaches the same position at the same ply count, give or take a few tempo-neutral orders.
+  const game = new Set(positionKeys(moves.slice(0, longest + 4)));
+  let best: { opening: Opening; lineId: string; depth: number } | null = null;
+  for (const { o, line } of lines) {
+    const keys = keysOfLine(line.moves);
+    let d = keys.length - 1;
+    while (d > 0 && !game.has(keys[d] as string)) d--;
+    if (d >= (o.definingPly ?? DEFAULT_DEFINING_PLY) && (!best || d > best.depth)) best = { opening: o, lineId: line.id, depth: d };
   }
   return best;
 }

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { detectConcepts } from '../src/services/pedagogy/concepts';
-import { explainMove } from '../src/services/pedagogy/explain';
+import { errorKindOf, explainMove, threatBefore } from '../src/services/pedagogy/explain';
+import { settledSwing } from '../src/services/chess/material';
 import { applyUci } from '../src/services/chess/position';
 import type { MoveReview, Score } from '../src/types/domain';
 
@@ -136,5 +137,184 @@ describe('explanations', () => {
   it('never attributes psychological causes to the player', () => {
     const source = readFileSync(new URL('../src/services/pedagogy/explain.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/aten[cç][aã]o|distra|pressa|descuid|nervos|esqueceu|não viu|cansa|desleix/i);
+  });
+});
+
+// Sprint 3 audit, phase 2: explanations must not deny tactics that exist.
+const NEGATIONS = /sem um motivo tático|Não há perda|sem perda imediata/i;
+const LEGAL_G6 = 'rn1qkbnr/ppp2ppp/3p4/4p3/2B1P1b1/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 3 4';
+
+describe('truthful fallbacks (audit A2)', () => {
+  it("Légal 4…g6: cites the pawn White wins instead of 'no tactical reason'", () => {
+    // 5.Nxe5 dxe5 6.Qxg4: the bishop on g4 falls once the knight unblocks d1–g4.
+    const r = review(LEGAL_G6, 'g7g6', 'g6', { ply: 8, evalBefore: cp(-40), evalAfter: cp(150), winBefore: 46, winAfter: 36, winLoss: 10, classification: 'mistake', bestLine: ['g8f6'], bestMoveSan: 'Nf6' });
+    const e = explainMove(r, ['f3e5', 'd6e5', 'd1g4', 'g8f6', 'g4e2', 'b8c6']);
+    const text = [e.whatHappened, e.why, e.consequence].join(' ');
+    expect(text).not.toMatch(NEGATIONS);
+    expect(e.theme).not.toBe('opening');
+    expect(e.skill).not.toBe('openings');
+    expect(text).toContain('Nxe5');
+    expect(text).toMatch(/1 ponto/);
+  });
+
+  it('a line that does not settle is reported as not verified, never as "no loss"', () => {
+    const e = explainMove(review('4k3/pp6/8/8/8/8/PP2Q3/4K3 w - - 0 1', 'e2e3', 'Qe3', { ply: 40, bestLine: ['e2b5'] }), ['e8d7']);
+    const text = [e.whatHappened, e.why].join(' ');
+    expect(text).not.toMatch(NEGATIONS);
+    expect(e.confidence).toBe('limited');
+  });
+
+  it('no fallback template asserts the absence of tactics', () => {
+    const source = readFileSync(new URL('../src/services/pedagogy/explain.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(NEGATIONS);
+  });
+});
+
+describe("opponent's lines are never presented as the better move (audit A3)", () => {
+  it('a combination by the opponent is a fact/consequence, not a "why"', () => {
+    // Légal again, but the motif detector finds no named pattern for Nxe5.
+    const r = review(LEGAL_G6, 'g7g6', 'g6', { ply: 8, classification: 'mistake', bestLine: ['g8f6'], bestMoveSan: 'Nf6' });
+    const e = explainMove(r, ['f3e5', 'd6e5', 'd1g4', 'g8f6', 'g4e2', 'b8c6']);
+    expect(e.why ?? '').not.toContain('Nxe5');
+  });
+
+  it('a verified concept is ranked before an unverified one', () => {
+    for (const fen of [LEGAL_G6, ITALIAN]) {
+      const cs = detectConcepts(review(fen, fen === ITALIAN ? 'f3d4' : 'g7g6', 'x', { ply: 8, bestLine: [] }), fen === ITALIAN ? ['e5d4', 'c2c3'] : ['f3e5', 'd6e5', 'd1g4', 'g8f6', 'g4e2', 'b8c6']);
+      const firstUnverified = cs.findIndex((c) => !c.verified);
+      const lastVerified = cs.map((c) => c.verified).lastIndexOf(true);
+      if (firstUnverified >= 0 && lastVerified >= 0) expect(lastVerified).toBeLessThan(firstUnverified);
+    }
+  });
+});
+
+describe('pin tense and gender (audit M2, B1)', () => {
+  it('a pin the opponent can still create is described in the future, naming the pinning move', () => {
+    const r = review('r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1', 'e1d2', 'Kd2', { bestLine: ['e1e2'] });
+    const e = explainMove(r, ['a8d8', 'd2e3', 'd8d5', 'e3e4', 'd5d1', 'e4e3']);
+    expect(e.theme).toBe('pin');
+    expect(e.whatHappened).not.toMatch(/está cravad/);
+    expect(e.whatHappened).toContain('Rd8');
+  });
+
+  it('feminine pieces get feminine articles and agreement', () => {
+    // The rook on a1 is attacked by the bishop and stays attacked.
+    const r = review('4k3/8/8/8/8/8/1b6/R3K3 w - - 0 1', 'e1e2', 'Ke2', { bestLine: ['a1a2'] });
+    const e = explainMove(r, ['b2a1', 'e2d3', 'a1e5', 'd3e4']);
+    expect(e.whatHappened).toMatch(/Sua torre/);
+    expect(e.whatHappened).toMatch(/capturada/);
+    expect(e.whatHappened).not.toMatch(/Seu torre|capturado/);
+  });
+
+  it('target lists use an article for every piece', () => {
+    const r = review('3qk3/8/8/8/3n4/8/2Q5/R3K3 w Q - 0 1', 'c2h2', 'Qh2', { bestLine: ['c2c3'] });
+    const e = explainMove(r, ['d4f3', 'e1e2', 'f3h2', 'a1a8', 'd8a8', 'e2e3']);
+    expect(e.whatHappened).toMatch(/o rei em e1 e a dama em h2/);
+  });
+});
+
+// Sprint 3 audit, phase 7: "why it is better" states a fact or is omitted.
+const QUIET = '4k3/pp6/8/8/8/8/PP2Q3/4K3 w - - 0 1';
+
+describe('"why" compares both moves or is omitted (audit M7)', () => {
+  it('omits the section when no fact separates the moves, instead of repeating the engine line', () => {
+    const e = explainMove(review(QUIET, 'e2e3', 'Qe3', { ply: 40, bestLine: ['e2b5', 'e8d8'], bestMoveSan: 'Qb5+', bestMoveUci: 'e2b5' }), ['e8d7']);
+    expect(e.category).toBe('positional');
+    expect(e.why).toBeUndefined();
+    expect(e.betterAlternative).toContain('Qb5+');
+  });
+
+  it('compares settled material of the best line and the played line', () => {
+    // 1.Qb5+ Kd8 2.Qxb7 a6 wins a pawn; after Qe3 Kd7 material is level.
+    const r = review(QUIET, 'e2e3', 'Qe3', { ply: 40, bestLine: ['e2b5', 'e8d8', 'b5b7', 'a7a6'], bestMoveSan: 'Qb5+', bestMoveUci: 'e2b5' });
+    const c = detectConcepts(r, ['e8d7'])[0];
+    expect(c?.evidence.materialCompare).toEqual({ best: 1, played: 0 });
+    const e = explainMove(r, ['e8d7']);
+    expect(e.why).toMatch(/Com Qb5\+.*\+1.*Qe3.*0/);
+    expect(e.why).not.toMatch(/continuação preferida/);
+  });
+
+  it('a defense against mate is justified by the mate distance, not by naming the move', () => {
+    const r = review(QUIET, 'e2e3', 'Qe3', { ply: 40, evalBefore: { kind: 'mate', value: -5 }, evalAfter: { kind: 'mate', value: -2 }, bestLine: ['e2b5'], bestMoveSan: 'Qb5+', bestMoveUci: 'e2b5' });
+    const e = explainMove(r, ['e8d7']);
+    expect(e.theme).toBe('mate_threat');
+    expect(e.why).toBe('Com Qb5+, o mate demoraria 5 lance(s); depois de Qe3, vem em 2.');
+  });
+
+  it('no template uses the bare engine line as the justification', () => {
+    const source = readFileSync(new URL('../src/services/pedagogy/explain.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/continuação preferida pelo motor|defesa mais (sólida|resistente)|Sequência do motor:/);
+  });
+});
+
+describe('Sprint 3: six-question explanations', () => {
+  // Blackburne–Shilling after 4.Nxe5?: the engine line Qg5 Bxf7+ Kd8 Ng4 Nh6 c3 Nc2+ Qxc2 Qxg4 Bb3.
+  const BLACKBURNE = 'r1bqkbnr/pppp1ppp/8/4p3/2BnP3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4';
+  const REPLY = ['d8g5', 'c4f7', 'e8d8', 'e5g4', 'g8h6', 'c2c3', 'd4c2', 'd1c2', 'g5g4', 'f7b3'];
+
+  it('material is not measured right before a capture the line is about to make', () => {
+    // Six plies end on a quiet king move, but the line's next move wins the rook on a1 (no recapture, no check).
+    const fen = '4k3/8/8/8/8/8/1q4P1/R3K3 b - - 0 1';
+    const s = settledSwing(fen, ['e8e7', 'e1f1', 'e7e6', 'f1g1', 'e6e5', 'g1h2', 'b2a1'], 'w');
+    expect(s).toMatchObject({ plies: 7, delta: -5, settled: true });
+  });
+
+  it('a line ending on a capture nobody can answer is settled; one with a recapture pending is not', () => {
+    // 3.Nd4?? exd4 c3 d5 cxd4 dxe4 d5 Qxd5: the queen on d5 cannot be recaptured.
+    const after = applyUci('r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3', 'f3d4') as string;
+    expect(settledSwing(after, ['e5d4', 'c2c3', 'd7d5', 'c3d4', 'd5e4', 'd4d5', 'd8d5'], 'w')).toMatchObject({ delta: -4, settled: true });
+    // Rxd5 can be met by …exd5: the exchange is unfinished.
+    expect(settledSwing('3qk3/8/4p3/3n4/8/8/8/3RK3 w - - 0 1', ['d1d5'], 'w').settled).toBe(false);
+  });
+
+  it('a capture without a recognized motif is a calculation error, never "opening principles"', () => {
+    const r = review(BLACKBURNE, 'f3e5', 'Nxe5', { ply: 7, bestLine: ['e1g1'], evalBefore: cp(116), evalAfter: cp(-59), winBefore: 60, winAfter: 44, winLoss: 16 });
+    const e = explainMove(r, REPLY);
+    expect(e.theme).not.toBe('opening');
+    expect(e.skill).not.toBe('openings');
+    if (e.theme === 'unsound_forcing') expect(e.kind).toBe('calculation');
+  });
+
+  it('names the opponent threat before the move from legal facts, and omits it when there is none', () => {
+    // Black's rook on d8 attacks the undefended Nd4 (SEE > 0) before White's quiet king move.
+    const threatened = review('3r2k1/8/8/8/3N4/8/6P1/6K1 w - - 0 1', 'g1h1', 'Kh1', { bestLine: ['d4f5'] });
+    expect(threatBefore(threatened)).toMatch(/seu cavalo em d4/);
+    const quiet = review('6k1/8/8/8/3N4/8/6P1/6K1 w - - 0 1', 'g1h1', 'Kh1', { bestLine: ['d4f5'] });
+    expect(threatBefore(quiet)).toBeUndefined();
+  });
+
+  it('a mate-in-one threat before the move is named with its move', () => {
+    // Back rank: ...Ra1# is threatened before White plays a king move.
+    const r = review('r5k1/8/8/8/8/8/5PPP/6K1 w - - 0 1', 'g1f1', 'Kf1', { bestLine: ['h2h3'] });
+    expect(threatBefore(r)).toMatch(/mate em 1 com Ra1#?/);
+  });
+
+  it('says what happens after the better move (engine line and evaluation)', () => {
+    const r = review(ITALIAN, 'f3d4', 'Nd4', { ply: 5, bestLine: ['f1c4', 'f8c5', 'c2c3'], evalBefore: cp(30) });
+    expect(explainMove(r, ['e5d4', 'c2c3']).afterAlternative).toMatch(/Bc4 Bc5 c3 — avaliação \+0[.,]30/);
+  });
+
+  it('labels each kind of decision', () => {
+    const base = { category: 'tactical' as const, verified: true, evidence: {} };
+    expect(errorKindOf({ ...base, theme: 'fork', side: 'opponent' })).toBe('tactical');
+    expect(errorKindOf({ ...base, theme: 'fork', side: 'own' })).toBe('missed_opportunity');
+    expect(errorKindOf({ ...base, theme: 'losing_capture', side: 'opponent' })).toBe('calculation');
+    // An opponent combination after the player's own capture/check refutes that forcing move.
+    expect(errorKindOf({ ...base, theme: 'combination', side: 'opponent', verified: false }, true)).toBe('calculation');
+    expect(errorKindOf({ ...base, theme: 'combination', side: 'opponent', verified: false }, false)).toBe('tactical');
+    expect(errorKindOf({ ...base, theme: 'conversion', category: 'positional' })).toBe('strategic');
+    expect(errorKindOf({ ...base, theme: 'positional', category: 'positional' })).toBe('positional');
+    const best = explainMove(review(ITALIAN, 'f1c4', 'Bc4', { classification: 'best', winLoss: 0 }), []);
+    const close = explainMove(review(ITALIAN, 'f1b5', 'Bb5', { classification: 'excellent', winLoss: 1, bestMoveSan: 'Bc4' }), []);
+    expect([best.kind, close.kind]).toEqual(['correct', 'equivalent']);
+  });
+
+  it('an unverified inaccuracy gets the facts, not a full lesson (proportional)', () => {
+    const r = review(ITALIAN, 'h2h3', 'h3', { ply: 5, classification: 'inaccuracy', winLoss: 6, bestLine: ['f1c4'], bestMoveSan: 'Bc4' });
+    const e = explainMove(r, ['g8f6']);
+    expect(e.confidence).toBe('limited');
+    expect(e.concept).toBeUndefined();
+    expect(e.recognize).toBeUndefined();
+    expect(e.betterAlternative).toBe('Bc4.');
   });
 });

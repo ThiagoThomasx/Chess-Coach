@@ -4,7 +4,6 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { getDb } from '../../db/database';
 import { estimateProfile, SKILLS, SKILL_LABEL } from '../../services/adaptation/skills';
 import { analysesOverTime, attemptStats, errorDistribution, openingResults, openingStudy, themeCounts, toAnalyzedInputs } from '../../services/stats/stats';
-import { THEME_LABEL } from '../../services/pedagogy/concepts';
 import { findOpening } from '../../services/openings/library';
 import { SkillProfile } from './SkillProfile';
 import { ClassDistributionChart, CountByDayChart, SkillHistoryChart } from './ProgressCharts';
@@ -78,7 +77,7 @@ export function ProgressPage() {
         </div>
         <SkillProfile profile={profile} />
         <details style={{ marginTop: '0.9rem' }}>
-          <summary className="small muted" style={{ cursor: 'pointer' }}>
+          <summary className="small muted touch-link" style={{ cursor: 'pointer' }}>
             Como o perfil é calculado
           </summary>
           <div className="small muted stack" style={{ marginTop: '0.5rem' }}>
@@ -134,11 +133,11 @@ export function ProgressPage() {
           {themes.length === 0 && <p className="small muted">Nenhum tema identificado com evidência verificada.</p>}
           <div className="stack" style={{ gap: '0.4rem' }}>
             {themes.map((t) => (
-              <div key={t.theme}>
-                <button className="btn btn-ghost btn-sm" onClick={() => setOpenTheme(openTheme === t.theme ? null : t.theme)} aria-expanded={openTheme === t.theme}>
-                  {THEME_LABEL[t.theme]} <span className="mono">({t.count})</span>
+              <div key={t.key}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setOpenTheme(openTheme === t.key ? null : t.key)} aria-expanded={openTheme === t.key}>
+                  {t.label} <span className="mono">({t.count})</span>
                 </button>
-                {openTheme === t.theme && (
+                {openTheme === t.key && (
                   <div className="row xs" style={{ padding: '0.3rem 0.6rem' }}>
                     {t.refs.map((r) => (
                       <Link key={`${r.gameId}-${r.ply}`} className="tag tag-info" to={`/analysis/${r.gameId}?ply=${r.ply}`}>

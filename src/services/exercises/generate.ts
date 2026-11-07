@@ -1,11 +1,12 @@
 import { Chess } from 'chess.js';
 import type { AcceptableMove, ClassificationThresholds, EngineLine, Exercise, Game, MoveReview, PositionAnalysis, Theme } from '../../types/domain';
-import { legalMoveCount, parseUci, uciToSan } from '../chess/position';
+import { applyUci, legalMoveCount, parseUci, uciToSan } from '../chess/position';
+import { enPrise, seeCapture } from '../chess/tactics';
 import { winPercentFor } from '../analysis/evaluation';
 import { DEFAULT_THRESHOLDS } from '../analysis/classify';
-import { detectConcepts, THEME_SKILL } from '../pedagogy/concepts';
+import { detectConcepts, skillOf } from '../pedagogy/concepts';
 import { newId } from '../../utils/hash';
-import type { EngineLike } from '../analysis/gameAnalyzer';
+import { fenKey, type EngineLike } from '../analysis/gameAnalyzer';
 import { buildSolutionTree, goalFor, mainLine, type TreeOptions } from './sequence';
 
 export const DEFAULT_TOLERANCE = 5; // win% points
@@ -16,6 +17,8 @@ export interface CandidateCheck {
 }
 
 const TACTICAL: readonly Theme[] = ['missed_mate', 'missed_capture', 'fork', 'missed_check'];
+/** Themes whose objective text already describes a defense. */
+const DEFENSIVE_OBJECTIVE: readonly Theme[] = ['allowed_mate', 'mate_threat', 'defense', 'hanging_piece', 'ignored_threat', 'removed_defender'];
 
 /** Minimum quality criteria a position must pass to become an exercise. */
 export function checkCandidate(review: MoveReview, before: PositionAnalysis | null, thresholds: ClassificationThresholds = DEFAULT_THRESHOLDS): CandidateCheck {
@@ -56,6 +59,7 @@ export function estimateDifficulty(fen: string, solution: readonly string[], the
   const isCheck = chess.inCheck();
   let d = 2;
   if (!isCapture && !isCheck) d += 1; // quiet moves are harder to find
+  if (isSacrifice(fen, first)) d += 1; // giving material away is counter-intuitive
   const userMoves = Math.ceil(solution.length / 2);
   if (userMoves >= 3) d += 1;
   if (userMoves >= 2 && theme !== 'missed_capture') d += 0.5;
@@ -64,7 +68,18 @@ export function estimateDifficulty(fen: string, solution: readonly string[], the
   return Math.max(1, Math.min(5, Math.round(d)));
 }
 
-function objectiveFor(theme: Theme, mateIn?: number): string {
+/** The move gives material: a losing capture by SEE, or the moved piece left capturable with gain. */
+export function isSacrifice(fen: string, uci: string): boolean {
+  const see = seeCapture(fen, uci);
+  if (see !== null && see < 0) return true;
+  const after = applyUci(fen, uci);
+  if (!after) return false;
+  const mover = fen.split(' ')[1] === 'b' ? 'b' : 'w';
+  return enPrise(after, mover).some((e) => e.square === parseUci(uci).to);
+}
+
+function objectiveFor(theme: Theme, mateIn?: number, motifSide?: 'own' | 'opponent'): string {
+  if (motifSide === 'opponent' && !DEFENSIVE_OBJECTIVE.includes(theme)) return 'Encontre um lance que evite a tática do adversário.';
   switch (theme) {
     case 'missed_mate':
       return mateIn ? `Encontre o mate em ${mateIn}.` : 'Encontre o mate forçado.';
@@ -110,6 +125,7 @@ export function buildExercise({ game, review, before, replyLine, tolerance = DEF
   const concepts = detectConcepts(review, replyLine);
   // From the solver's view, an error that lost material becomes "find the safe move".
   const theme: Theme = concepts[0]?.theme ?? 'positional';
+  const motifSide = concepts[0]?.side;
   const acceptable = acceptableMovesFrom(before, tolerance);
   const bestMove = acceptable[0];
   if (!bestMove) return null;
@@ -124,9 +140,10 @@ export function buildExercise({ game, review, before, replyLine, tolerance = DEF
     gameId: game.id,
     ply: review.ply,
     sideToMove: review.color,
-    objective: objectiveFor(theme, mateIn),
+    objective: objectiveFor(theme, mateIn, motifSide),
     theme,
-    skill: THEME_SKILL[theme],
+    ...(motifSide ? { motifSide } : {}),
+    skill: concepts[0] ? skillOf(concepts[0]) : skillOf({ theme }),
     bestMove,
     acceptableMoves: acceptable,
     solutionLine,
@@ -147,17 +164,25 @@ export function selectExercisePositions(
   positions: readonly (PositionAnalysis | null)[],
   opts: { max: number; thresholds?: ClassificationThresholds; existingFens?: Set<string> },
 ): MoveReview[] {
-  const seen = opts.existingFens ?? new Set<string>();
-  return reviews
+  // Positions are compared without move counters: the same position reached at another move number is a repeat.
+  const seen = new Set([...(opts.existingFens ?? [])].map(fenKey));
+  const picked: MoveReview[] = [];
+  const candidates = reviews
     .filter((r) => game.userColor === undefined || r.color === game.userColor)
     .filter((r) => checkCandidate(r, positions[r.ply - 1] ?? null, opts.thresholds).ok)
-    .filter((r) => !seen.has(r.fenBefore))
-    .sort((a, b) => b.winLoss - a.winLoss)
-    .slice(0, opts.max);
+    .sort((a, b) => b.winLoss - a.winLoss);
+  for (const r of candidates) {
+    if (picked.length >= opts.max) break;
+    if (seen.has(fenKey(r.fenBefore))) continue;
+    seen.add(fenKey(r.fenBefore));
+    picked.push(r);
+  }
+  return picked;
 }
 
 const OBJECTIVE_BY_KIND = {
-  mate: (n?: number) => (n ? `Encontre o mate em ${n}.` : 'Encontre o mate forçado.'),
+  mate: (n: number | undefined, moves: number) =>
+    !n ? 'Encontre o mate forçado.' : n > moves ? `Há mate em ${n}: jogue os próximos ${moves} lances mantendo o mate forçado.` : `Encontre o mate em ${n}.`,
   sequence: (n: number) => `Encontre a sequência que ganha material (até ${n} lances seus; o adversário responde).`,
   conversion: (n: number) => `Mantenha a vantagem decisiva pelos próximos ${n} lances.`,
   defense: () => 'Encontre a defesa: não deixe material ou o rei desprotegidos.',
@@ -171,12 +196,14 @@ const OBJECTIVE_BY_KIND = {
 export async function withSolutionTree(ex: Exercise, engine: EngineLike, opts: TreeOptions): Promise<Exercise> {
   const best = ex.referenceLines[0];
   if (!best) return ex;
-  const goal = goalFor(ex.fen, best, ex.theme, opts.tolerance);
-  const tree = await buildSolutionTree(engine, ex.fen, goal, opts);
-  const accepted = tree.accepted.length ? tree.accepted : ex.acceptableMoves;
+  const goal = goalFor(ex.fen, best, ex.theme, opts.tolerance, ex.motifSide);
+  const built = await buildSolutionTree(engine, ex.fen, goal, opts, ex.bestMove.uci);
+  const accepted = built.accepted.length ? built.accepted : ex.acceptableMoves;
+  // A tree with an empty root cannot be solved; fall back to the review's accepted moves.
+  const tree = built.accepted.length ? built : { ...built, accepted };
   const line = mainLine(tree);
   const objective =
-    goal.kind === 'mate' ? OBJECTIVE_BY_KIND.mate(goal.mateIn) : goal.kind === 'single' ? (goal.maxUserMoves === 1 && ex.theme !== 'positional' ? ex.objective : OBJECTIVE_BY_KIND.single()) : OBJECTIVE_BY_KIND[goal.kind](goal.maxUserMoves);
+    goal.kind === 'mate' ? OBJECTIVE_BY_KIND.mate(goal.mateIn, goal.maxUserMoves) : goal.kind === 'single' ? (goal.maxUserMoves === 1 && ex.theme !== 'positional' ? ex.objective : OBJECTIVE_BY_KIND.single()) : OBJECTIVE_BY_KIND[goal.kind](goal.maxUserMoves);
   return {
     ...ex,
     kind: goal.kind,

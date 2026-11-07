@@ -1,7 +1,8 @@
 import type { Attempt, Exercise, SkillEvent } from '../types/domain';
-import { nextSrs, outcomeOf } from '../services/scheduling/srs';
+import { isPracticeRepeat, nextSrs, outcomeOf } from '../services/scheduling/srs';
 import { eventsFromAttempt } from '../services/adaptation/skills';
 import { getDb } from './database';
+import { fenKey } from '../services/analysis/gameAnalyzer';
 
 export async function listExercises(): Promise<Exercise[]> {
   return getDb().exercises.orderBy('createdAt').reverse().toArray();
@@ -11,13 +12,22 @@ export async function getExercise(id: string): Promise<Exercise | undefined> {
   return getDb().exercises.get(id);
 }
 
-/** Stores an exercise unless one already exists for the same position. */
+/**
+ * Stores an exercise unless one already exists for the same position (move
+ * counters ignored). The check and the insert share one read-write
+ * transaction, so concurrent calls (manual + automatic creation, or two tabs)
+ * cannot both pass the check: IndexedDB serializes write transactions on the
+ * same store.
+ */
 export async function addExercise(ex: Exercise): Promise<{ added: boolean; id: string }> {
   const db = getDb();
-  const dup = await db.exercises.filter((e) => e.fen === ex.fen).first();
-  if (dup) return { added: false, id: dup.id };
-  await db.exercises.add(ex);
-  return { added: true, id: ex.id };
+  const key = fenKey(ex.fen);
+  return db.transaction('rw', db.exercises, async () => {
+    const dup = await db.exercises.filter((e) => fenKey(e.fen) === key).first();
+    if (dup) return { added: false, id: dup.id };
+    await db.exercises.add(ex);
+    return { added: true, id: ex.id };
+  });
 }
 
 export async function deleteExercise(id: string): Promise<void> {
@@ -37,20 +47,29 @@ export async function listAttempts(): Promise<Attempt[]> {
   return getDb().attempts.orderBy('at').toArray();
 }
 
+export interface RecordedAttempt {
+  exercise: Exercise;
+  /** True when the attempt was practice (see isPracticeRepeat) and nothing was stored. */
+  practice: boolean;
+}
+
 /**
  * Records an attempt atomically: stores it, reschedules the exercise and
- * appends the corresponding skill evidence.
+ * appends the corresponding skill evidence. A repeat inside the practice
+ * window changes nothing.
  */
-export async function recordAttempt(ex: Exercise, attempt: Attempt, intervals: readonly number[]): Promise<Exercise> {
+export async function recordAttempt(ex: Exercise, attempt: Attempt, intervals: readonly number[]): Promise<RecordedAttempt> {
   const db = getDb();
-  const outcome = outcomeOf(attempt.correct, attempt.hintsUsed, attempt.revealed);
-  const updated: Exercise = { ...ex, srs: nextSrs(ex.srs, outcome, attempt.at, intervals) };
-  await db.transaction('rw', db.attempts, db.exercises, db.skillEvents, async () => {
+  return db.transaction('rw', db.attempts, db.exercises, db.skillEvents, async () => {
+    const previous = (await db.attempts.where('exerciseId').equals(ex.id).sortBy('at')).at(-1);
+    if (isPracticeRepeat(previous?.at, attempt.at)) return { exercise: ex, practice: true };
+    const outcome = outcomeOf(attempt.correct, attempt.hintsUsed, attempt.revealed);
+    const updated: Exercise = { ...ex, srs: nextSrs(ex.srs, outcome, attempt.at, intervals) };
     await db.attempts.add(attempt);
     await db.exercises.put(updated);
     await db.skillEvents.bulkAdd(eventsFromAttempt(ex, attempt));
+    return { exercise: updated, practice: false };
   });
-  return updated;
 }
 
 export async function listSkillEvents(): Promise<SkillEvent[]> {

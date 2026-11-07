@@ -1,6 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import type { Color, MoveReview, Skill, Theme } from '../../types/domain';
-import { gamePhase, settledSwing } from '../chess/material';
+import { gamePhase, settledSwing, type SettledSwing } from '../chess/material';
 import { applyUci, parseUci, uciLineToSan, uciToSan } from '../chess/position';
 import {
   attackedTargets,
@@ -47,6 +47,20 @@ export interface ConceptEvidence {
   by?: Square;
   defender?: Square;
   pinKind?: 'absolute' | 'relative';
+  /** The pin does not exist yet: the opponent's reply creates it. */
+  pinCreated?: boolean;
+  /** Whether the opponent's reply line reached a quiet point (material measured there). */
+  lineSettled?: boolean;
+  /** Plies of the reply line played before measuring material. */
+  linePlies?: number;
+  /**
+   * Same-criterion comparison of the best line and the played line: material
+   * for the mover at a settled point of each. Present only when both lines
+   * settled and the best one keeps more material.
+   */
+  materialCompare?: { best: number; played: number };
+  /** Opponent's mate distance with the best defense vs after the played move. */
+  mateCompare?: { best: number; played: number };
 }
 
 export const THEME_SKILL: Record<Theme, Skill> = {
@@ -70,6 +84,7 @@ export const THEME_SKILL: Record<Theme, Skill> = {
   losing_capture: 'calculation',
   combination: 'calculation',
   conversion: 'strategy',
+  unsound_forcing: 'calculation',
 };
 
 export const THEME_LABEL: Record<Theme, string> = {
@@ -93,10 +108,27 @@ export const THEME_LABEL: Record<Theme, string> = {
   losing_capture: 'Captura que perde material',
   combination: 'Combinação tática',
   conversion: 'Conversão de vantagem',
+  unsound_forcing: 'Lance forçante que não se sustenta',
 };
+
+/** Opponent motifs that, when allowed, measure spotting the opponent's threats rather than one's own tactics. */
+const THREAT_WHEN_ALLOWED: readonly Theme[] = ['fork', 'discovered_attack', 'pin', 'overloaded', 'deflection'];
+
+/**
+ * Competence a concept measures. A tactic the opponent was allowed to play is
+ * a threat-identification failure; the same motif missed by the player is a
+ * tactical/pattern one (the theme map alone would merge both).
+ */
+export function skillOf(c: Pick<Concept, 'theme' | 'side'>): Skill {
+  return c.side === 'opponent' && THREAT_WHEN_ALLOWED.includes(c.theme) ? 'threats' : THEME_SKILL[c.theme];
+}
 
 /** Material gain needed (points) before a line counts as tactical. */
 export const MATERIAL_THRESHOLD = 2;
+/** Material the opponent's settled reply must win (points) for the explanation to cite it. */
+export const CITED_LOSS_THRESHOLD = 1;
+/** Opponent motifs that only have an "own opportunity" wording; they are reported as a combination. */
+const OWN_ONLY_THEMES: readonly Theme[] = ['missed_capture', 'missed_check', 'combination'];
 
 function mateDistance(score: { kind: string; value: number }): number | undefined {
   return score.kind === 'mate' ? Math.max(1, Math.ceil(Math.abs(score.value))) : undefined;
@@ -104,6 +136,11 @@ function mateDistance(score: { kind: string; value: number }): number | undefine
 
 function isValuable(t: string): boolean {
   return t === 'k' || t === 'q' || t === 'r' || t === 'b' || t === 'n';
+}
+
+/** A pawn pinned along its own file can only push along it anyway: that pin restricts nothing. */
+function isMeaningfulPin(p: { pinned: Square; pinnedType: string; by: Square }): boolean {
+  return !(p.pinnedType === 'p' && p.pinned[0] === p.by[0]);
 }
 
 /** Tactical motif carried by the first move of `line` (played from `fen`), for the side that plays it. */
@@ -130,7 +167,9 @@ function motifOf(fen: string, line: readonly string[]): Omit<Concept, 'side' | '
   if (overloaded) return { theme: 'overloaded', evidence: { bestSan: san, defender: overloaded.defender, pieceType: overloaded.defenderType, targets: overloaded.targets.map((s) => ({ square: s, type: new Chess(fen).get(s)?.type ?? '' })) } };
 
   const before = new Set(pinsAgainst(fen, enemy).map((p) => `${p.pinned}${p.to}`));
-  const newPin = pinsAgainst(after, enemy).find((p) => p.by === to && !before.has(`${p.pinned}${p.to}`));
+  // A pin explains the gain only if the line goes on to capture the pinned piece.
+  const capturedLater = new Set(line.slice(1, 6).filter((_, i) => i % 2 === 1).map((u) => parseUci(u).to));
+  const newPin = pinsAgainst(after, enemy).find((p) => p.by === to && !before.has(`${p.pinned}${p.to}`) && capturedLater.has(p.pinned) && isMeaningfulPin(p));
   if (newPin) return { theme: 'pin', evidence: { bestSan: san, square: newPin.pinned, pieceType: newPin.pinnedType, by: newPin.by, pinKind: newPin.kind } };
 
   const victim = new Chess(fen).get(to);
@@ -140,6 +179,17 @@ function motifOf(fen: string, line: readonly string[]): Omit<Concept, 'side' | '
   }
   if (new Chess(after).inCheck()) return { theme: 'missed_check', evidence: { bestSan: san } };
   return { theme: 'combination', evidence: { bestSan: san } };
+}
+
+/**
+ * Material of the best line vs the played line (played move + engine reply),
+ * both measured at a settled point. Only kept when it actually separates them.
+ */
+function materialCompare(review: MoveReview, replyLine: readonly string[], best: SettledSwing): Pick<ConceptEvidence, 'materialCompare'> {
+  if (!review.bestLine[0] || review.bestMoveUci === review.uci) return {};
+  const played = settledSwing(review.fenBefore, [review.uci, ...replyLine], review.color);
+  if (!best.settled || !played.settled || best.delta - played.delta < CITED_LOSS_THRESHOLD) return {};
+  return { materialCompare: { best: best.delta, played: played.delta } };
 }
 
 /**
@@ -185,12 +235,12 @@ export function detectConcepts(review: MoveReview, replyLine: readonly string[])
 
   // 3. Material lost to the opponent's best reply: which motif made it possible?
   const replyFirst = replyLine[0];
-  if (replyFirst && reply.delta <= -MATERIAL_THRESHOLD && !out.some((c) => c.theme === 'losing_capture')) {
+  if (replyFirst && reply.delta <= -CITED_LOSS_THRESHOLD && !out.some((c) => c.theme === 'losing_capture')) {
     const target = parseUci(replyFirst).to;
     const base: ConceptEvidence = { replySan, capturingMoveSan: replySan[0] ?? replyFirst, materialDelta: reply.delta };
     const theirMotif = motifOf(review.fenAfter, replyLine);
     const ep = enPrise(review.fenAfter, mover).find((e) => e.square === target);
-    const pinnedTarget = pinsAgainst(review.fenAfter, mover).find((p) => p.pinned === target);
+    const pinnedTarget = pinsAgainst(review.fenAfter, mover).find((p) => p.pinned === target && isMeaningfulPin(p));
     if (theirMotif && ['fork', 'discovered_attack', 'deflection', 'overloaded'].includes(theirMotif.theme)) {
       out.push({ ...theirMotif, evidence: { ...theirMotif.evidence, ...base }, category: 'tactical', side: 'opponent', verified: reply.settled });
     } else if (pinnedTarget && ep) {
@@ -203,8 +253,11 @@ export function detectConcepts(review: MoveReview, replyLine: readonly string[])
       else if (wasEnPrise) out.push({ theme: 'ignored_threat', category: 'tactical', side: 'opponent', verified: reply.settled, evidence });
       else if (legalRecapturers(review.fenBefore, target, mover).includes(from)) out.push({ theme: 'removed_defender', category: 'tactical', side: 'opponent', verified: reply.settled, evidence: { ...evidence, defender: from } });
       else out.push({ theme: 'hanging_piece', category: 'tactical', side: 'opponent', verified: reply.settled, evidence });
+    } else if (theirMotif && OWN_ONLY_THEMES.includes(theirMotif.theme)) {
+      out.push({ theme: 'combination', category: 'tactical', side: 'opponent', verified: false, evidence: { ...base, lineSettled: reply.settled } });
     } else if (theirMotif) {
-      out.push({ ...theirMotif, evidence: { ...theirMotif.evidence, ...base }, category: 'tactical', side: 'opponent', verified: reply.settled && theirMotif.theme !== 'combination' });
+      const created = theirMotif.theme === 'pin' ? { pinCreated: true } : {};
+      out.push({ ...theirMotif, evidence: { ...theirMotif.evidence, ...base, ...created }, category: 'tactical', side: 'opponent', verified: reply.settled });
     }
   }
 
@@ -218,18 +271,37 @@ export function detectConcepts(review: MoveReview, replyLine: readonly string[])
   }
 
   // 5. Defensive situations.
+  const compare = materialCompare(review, replyLine, best);
   if (out.length === 0 && hasMateFor(review.evalBefore, opponent)) {
-    out.push({ theme: 'mate_threat', category: 'mate', side: 'opponent', verified: true, evidence: { bestSan, mateThreatBefore: mateThreats(review.fenBefore).length > 0 } });
+    const mateBest = mateDistance(review.evalBefore);
+    const matePlayed = hasMateFor(review.evalAfter, opponent) ? mateDistance(review.evalAfter) : undefined;
+    const mateCompare = mateBest !== undefined && matePlayed !== undefined && matePlayed < mateBest ? { mateCompare: { best: mateBest, played: matePlayed } } : {};
+    out.push({ theme: 'mate_threat', category: 'mate', side: 'opponent', verified: true, evidence: { bestSan, mateThreatBefore: mateThreats(review.fenBefore).length > 0, ...mateCompare } });
   }
-  if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', category: 'positional', verified: false, evidence: { bestSan } });
+  if (out.length === 0 && review.flags.includes('defense_needed')) out.push({ theme: 'defense', category: 'positional', verified: false, evidence: { bestSan, ...compare } });
 
   // 6. No tactical evidence: positional/phase explanation, always limited.
+  // A capture or check is a concrete decision, not a matter of phase principles.
   if (out.length === 0) {
     const phase = gamePhase(review.fenBefore, review.ply);
-    const theme: Theme = review.winBefore >= 80 ? 'conversion' : phase === 'opening' ? 'opening' : phase === 'endgame' ? 'endgame' : 'positional';
-    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan } });
+    const theme: Theme =
+      review.winBefore >= 80 ? 'conversion' : isForcingMove(review.fenBefore, review.uci) ? 'unsound_forcing' : phase === 'opening' ? 'opening' : phase === 'endgame' ? 'endgame' : 'positional';
+    out.push({ theme, category: 'positional', verified: false, evidence: { bestSan, replySan, lineSettled: reply.settled, linePlies: reply.plies, ...compare } });
   }
-  return out;
+  // Facts first: a verified concept always outranks an unverified one (stable otherwise).
+  return [...out.filter((c) => c.verified), ...out.filter((c) => !c.verified)];
+}
+
+/** The move captures, promotes or gives check. */
+export function isForcingMove(fen: string, uci: string): boolean {
+  const { to, promotion } = parseUci(uci);
+  if (promotion || new Chess(fen).get(to)) return true;
+  const after = applyUci(fen, uci);
+  if (!after) return false;
+  if (new Chess(after).inCheck()) return true;
+  // En passant: a pawn changing file onto an empty square.
+  const piece = new Chess(fen).get(parseUci(uci).from);
+  return piece?.type === 'p' && uci[0] !== uci[2];
 }
 
 /** True when a concept is backed by concrete, settled evidence (not phase heuristics). */

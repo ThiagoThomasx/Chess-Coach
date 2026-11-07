@@ -5,13 +5,15 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, afterAll } from 'vitest';
 import { UciEngine, type EngineTransport } from '../src/services/engine/UciEngine';
 import { analyzeGame, reviewMove } from '../src/services/analysis/gameAnalyzer';
-import { replayGame, uciToSan } from '../src/services/chess/position';
+import { replayGame, uciLineToSan, uciToSan } from '../src/services/chess/position';
+import { explainMove } from '../src/services/pedagogy/explain';
 import { detectConcepts } from '../src/services/pedagogy/concepts';
 import { DEFAULT_THRESHOLDS } from '../src/services/analysis/classify';
-import { buildSolutionTree, playSolverMove } from '../src/services/exercises/sequence';
-import type { Exercise, ExerciseGoal } from '../src/types/domain';
+import { buildSolutionTree, goalFor, playSolverMove } from '../src/services/exercises/sequence';
+import type { Exercise, ExerciseGoal, SolutionNode } from '../src/types/domain';
 import { parsePgnText } from '../src/services/pgn/parsePgn';
 import { SHORT_BLUNDER_GAME } from './fixtures';
+import { judgeOffBook, validateLine } from '../src/services/openings/practice';
 
 const BRIDGE = fileURLToPath(new URL('./support/sf-bridge.cjs', import.meta.url));
 
@@ -143,6 +145,37 @@ describe('sequence exercises with the real engine', () => {
     }
   }, 120_000);
 
+  it('builds a solvable tree for a mate longer than the move limit (audit C1)', async () => {
+    const fen = '8/8/8/3k4/8/8/8/K5Q1 w - - 0 1';
+    const probe = await engine.analyze({ fen, depth: 18 });
+    const best = probe.lines[0]!;
+    expect(best.score.kind).toBe('mate');
+    const long = goalFor(fen, best, 'missed_mate', 5);
+    expect(long.mateIn).toBeGreaterThan(4);
+    const tree = await buildSolutionTree(engine, fen, long, opts);
+    expect(tree.accepted.length).toBeGreaterThanOrEqual(1);
+    const ex = { id: 'm', fen, sideToMove: 'w', tolerance: 5, goal: long, tree, kind: 'mate' } as unknown as Exercise & { goal: ExerciseGoal };
+    const v = await playSolverMove(ex, { node: tree, userMoves: 0, fen }, tree.accepted[0]!.uci, { engine, depth: 14, tolerance: 5, choose: () => 0 });
+    expect(['continue', 'solved']).toContain(v.kind);
+  }, 240_000);
+
+  it('opponent replies in a mate tree are the longest defenses, never a faster mate (Sprint 3)', async () => {
+    // Q+R vs K, mate in 7: at depth 16 every king move is "0%" for Black, so win% cannot rank them.
+    const fen = '8/8/8/4k3/8/8/2Q5/1R4K1 w - - 0 1';
+    const best = (await engine.analyze({ fen, depth: 16 })).lines[0]!;
+    const goal = goalFor(fen, best, 'missed_mate', 5);
+    const tree = await buildSolutionTree(engine, fen, goal, { depth: 16, multiPv: 3, tolerance: 5 });
+    const check = (n: SolutionNode): void => {
+      for (const branches of Object.values(n.replies)) {
+        const distances = new Set(branches.map((b) => Math.abs(b.score.value)));
+        expect(branches.every((b) => b.score.kind === 'mate')).toBe(true);
+        expect(distances.size).toBeLessThanOrEqual(1);
+        branches.forEach((b) => b.next && check(b.next));
+      }
+    };
+    check(tree);
+  }, 300_000);
+
   it('judges a move outside the stored lines with a fresh search', async () => {
     const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     const single: ExerciseGoal = { kind: 'single', maxUserMoves: 1, targetWin: 50 };
@@ -159,3 +192,53 @@ describe('sequence exercises with the real engine', () => {
 function sanOf(fen: string, uci: string): string {
   return uciToSan(fen, uci) as string;
 }
+
+describe('explanation corpus from the Sprint 3 audit (real engine)', () => {
+  const NEGATIONS = /sem um motivo tático|Não há perda|sem perda imediata/i;
+  async function explainPlayed(fen: string, san: string) {
+    const [, side, , , , fullmove] = fen.split(' ');
+    // The real game ply (replayGame from a FEN counts from 1), so the phase is right.
+    const played = { ...replayGame([san], fen)[0]!, ply: (Number(fullmove) - 1) * 2 + (side === 'w' ? 1 : 2) };
+    const before = await engine.analyze({ fen, depth: 16, multiPv: 2 });
+    const after = await engine.analyze({ fen: played.fenAfter, depth: 16, multiPv: 1 });
+    const r = reviewMove(played, before, after)!;
+    const reply = after.lines[0]?.pv ?? [];
+    return { r, e: explainMove(r, reply), concepts: detectConcepts(r, reply), reply };
+  }
+
+  const A2: [string, string, string][] = [
+    ['Légal 4…g6', 'rn1qkbnr/ppp2ppp/3p4/4p3/2B1P1b1/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 3 4', 'g6'],
+    ['Blackburne 4.Nxe5', 'r1bqkbnr/pppp1ppp/8/4p3/2BnP3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4', 'Nxe5'],
+    ['Byrne 11.Bg5', 'r2q1rk1/pp2ppbp/1np2np1/2Q5/3PPBb1/2N2N2/PP3PPP/3RKB1R w K - 5 11', 'Bg5'],
+    ['Opera 10…cxb5', 'rn2kb1r/p3qppp/2p2n2/1N2p1B1/2B1P3/1Q6/PPP2PPP/R3K2R b KQkq - 0 10', 'cxb5'],
+  ];
+  for (const [name, fen, san] of A2) {
+    it(`${name}: no unproven negation, not filed under openings (A2)`, async () => {
+      const { e } = await explainPlayed(fen, san);
+      expect([e.whatHappened, e.why, e.consequence].join(' ')).not.toMatch(NEGATIONS);
+      expect(e.skill).not.toBe('openings');
+    }, 120_000);
+  }
+
+  const A3: [string, string, string][] = [
+    ['Immortal 11…cxb5', 'rnb1kb1r/p2p1ppp/2p2n2/1B3Nq1/4PpP1/3P4/PPP4P/RNBQ1KR1 b kq - 2 11', 'cxb5'],
+    ['Immortal 18…Bxg1', 'rnb1k1nr/p2p1ppp/3B4/1pbN1N1P/4P1P1/3P1Q2/PqP5/R4KR1 b kq - 1 18', 'Bxg1'],
+  ];
+  for (const [name, fen, san] of A3) {
+    it(`${name}: the opponent's line is not the "why" of the better move, facts first (A3)`, async () => {
+      const { e, concepts, reply } = await explainPlayed(fen, san);
+      const replyStart = uciLineToSan(replayGame([san], fen)[0]!.fenAfter, reply.slice(0, 3)).join(' ');
+      expect(e.why ?? '').not.toContain(replyStart);
+      if (concepts.some((c) => c.verified)) expect(concepts[0]?.verified).toBe(true);
+    }, 120_000);
+  }
+});
+
+describe('opening deviations (audit M3, real engine)', () => {
+  it('London 2.Nf3 is off-book but playable; 2.Ba6?? in the Italian is not', async () => {
+    const london = validateLine(['d4', 'd5']).fens[2]!;
+    expect((await judgeOffBook(engine, london, 'g1f3', 5)).playable).toBe(true);
+    const italian = validateLine(['e4', 'e5']).fens[2]!;
+    expect((await judgeOffBook(engine, italian, 'f1a6', 5)).playable).toBe(false);
+  }, 120_000);
+});

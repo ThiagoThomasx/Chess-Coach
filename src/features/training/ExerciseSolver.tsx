@@ -38,17 +38,20 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
   const attempts = useLiveQuery(() => getDb().attempts.where('exerciseId').equals(ex.id).sortBy('at'), [ex.id], []);
   const nextDue = useLiveQuery(async () => (await getDb().exercises.where('srs.dueAt').belowOrEqual(Date.now()).toArray()).filter((e) => e.id !== ex.id).sort((a, b) => a.srs.dueAt - b.srs.dueAt)[0]?.id, [ex.id, s.nextDue]);
   const orientation = ex.sideToMove === 'w' ? 'white' : 'black';
-  const done = s.status === 'solved' || s.status === 'failed' || s.status === 'revealed';
+  const done = s.status === 'solved' || s.status === 'failed' || s.status === 'revealed' || s.status === 'uncertain';
   const highlights = s.hintSquare ? { [s.hintSquare]: { boxShadow: 'inset 0 0 0 4px rgba(217,178,106,0.95)' } } : {};
 
   return (
     <div className="page">
       <header className="page-head">
         <div>
-          <Link to="/train" className="small row">
+          <Link to="/train" className="small row touch-link">
             <ArrowLeft size={14} /> Treino
           </Link>
-          <h1 style={{ marginTop: '0.3rem' }}>{THEME_LABEL[ex.theme]}</h1>
+          {/* The theme gives the motif away: it is shown only once an attempt has ended. */}
+          <h1 style={{ marginTop: '0.3rem' }} data-testid="exercise-title">
+            {done || attempts.length > 0 ? THEME_LABEL[ex.theme] : 'Exercício'}
+          </h1>
           <p>{ex.objective}</p>
         </div>
         <div className="row">
@@ -98,6 +101,11 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
                 Resultado salvo. Próxima revisão: {new Date(s.nextDue).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
               </p>
             )}
+            {s.practice && (
+              <p className="xs muted" style={{ marginTop: '0.75rem' }} data-testid="practice-note">
+                Repetição de prática: feita logo após a tentativa anterior, não altera a revisão nem o perfil.
+              </p>
+            )}
           </section>
           {done && (
             <section className="panel fade-in">
@@ -128,7 +136,7 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
               </button>
             </div>
             {ex.gameId ? (
-              <Link to={`/analysis/${ex.gameId}`} className="small">
+              <Link to={`/analysis/${ex.gameId}`} className="small touch-link">
                 Partida de origem · meia-jogada {ex.ply}
               </Link>
             ) : (

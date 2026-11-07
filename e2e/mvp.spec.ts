@@ -52,6 +52,9 @@ test('import → analyze → explain → exercise → solve → reload → profi
   await expect(explanation).toContainText(/Erro grave|Erro/);
   await expect(explanation).toContainText('Peça desprotegida');
   await expect(explanation).toContainText('exd4');
+  // Sprint 3: the kind of error is named, and the better alternative's continuation is shown.
+  await expect(page.getByTestId('error-kind')).toHaveText('Erro tático');
+  await expect(explanation).toContainText('O que acontece depois da alternativa');
   await expect(page.locator('.engine-line').first()).toBeVisible();
 
   // 8. The position becomes an exercise (auto-generated, or via the button).
@@ -78,6 +81,15 @@ test('import → analyze → explain → exercise → solve → reload → profi
   await page.goto('/#/progress');
   await expect(page.getByTestId('skill-threats')).toContainText(/evidência/);
   await expect(page.getByTestId('skill-threats')).not.toContainText('Sem dados');
+  // One game is too little evidence for a point estimate: only the interval is shown (audit B4).
+  await expect(page.getByTestId('skill-threats')).toContainText(/entre \d+% e \d+%/);
+  await expect(page.getByTestId('skill-threats').locator('.pt')).toHaveCount(0);
+
+  // The dashboard groups competences by state and counts analyzed games (Sprint 3).
+  await page.goto('/#/');
+  await expect(page.getByTestId('stat-analyzed')).toHaveText('1');
+  await expect(page.getByTestId('skill-states')).toBeVisible();
+  await expect(page.getByTestId('skill-state-insufficient')).toContainText('Identificação de ameaças');
 
   expect(external, 'no requests to external hosts').toEqual([]);
   expect(errors, 'no console errors').toEqual([]);
@@ -88,12 +100,38 @@ test('opening practice records progress', async ({ page }) => {
   await page.getByTestId('practice-toggle').click();
   await playMove(page, 'opening-practice-board', 'e2e4');
   await expect(page.getByTestId('opening-feedback')).toContainText('e4 ✓');
-  // Wrong move on purpose: expected Nf3 after 1...e5.
+  // Losing move on purpose (2.Ba6?? bxa6): the engine confirms it, so it counts as an error.
   await page.waitForTimeout(700);
-  await playMove(page, 'opening-practice-board', 'f1c4');
-  await expect(page.getByTestId('opening-feedback')).toContainText('O esperado era Nf3');
+  await playMove(page, 'opening-practice-board', 'f1a6');
+  await expect(page.getByTestId('opening-feedback')).toContainText('O esperado era Nf3', { timeout: 30_000 });
   const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
   expect(attempts.at(-1)?.correct).toBe(false);
+});
+
+test('opening practice accepts a transposition (audit M3)', async ({ page }) => {
+  await page.goto('/#/openings');
+  await page.getByTestId('practice-toggle').click();
+  await playMove(page, 'opening-practice-board', 'e2e4');
+  await page.waitForTimeout(700);
+  // 2.Bc4 Nc6 3.Nf3 reaches the line position after 3.Bc4.
+  await playMove(page, 'opening-practice-board', 'f1c4');
+  await expect(page.getByTestId('opening-feedback')).toContainText('transposição');
+  await expect(page.locator('#opening-practice-board-square-c6 [data-piece]')).toBeVisible();
+  await playMove(page, 'opening-practice-board', 'g1f3');
+  await expect(page.getByTestId('opening-feedback')).toContainText('Nf3 ✓');
+  const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
+  expect(attempts.filter((a) => !a.correct)).toHaveLength(0);
+});
+
+test('a playable move outside the line ends the drill without an error (audit M3)', async ({ page }) => {
+  await page.goto('/#/openings');
+  await page.getByTestId('practice-toggle').click();
+  await playMove(page, 'opening-practice-board', 'e2e4');
+  await page.waitForTimeout(700);
+  await playMove(page, 'opening-practice-board', 'b1c3');
+  await expect(page.getByTestId('opening-feedback')).toContainText('fora do repertório, mas é jogável', { timeout: 30_000 });
+  const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
+  expect(attempts.filter((a) => !a.correct)).toHaveLength(0);
 });
 
 test('backup export produces a valid file', async ({ page }) => {
@@ -112,4 +150,25 @@ test('invalid backup is refused without touching data', async ({ page }) => {
   await page.goto('/#/settings');
   await page.getByTestId('restore-input').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"format":"x"}') });
   await expect(page.getByText(/Backup recusado/)).toBeVisible();
+});
+
+// Sprint 3.1: a storage failure while creating an exercise is reported and the button recovers.
+test('a failed exercise write shows an error and does not leave the button stuck', async ({ page }) => {
+  await page.goto('/#/games');
+  await page.getByTestId('pgn-input').setInputFiles({ name: 'a.pgn', mimeType: 'application/x-chess-pgn', buffer: Buffer.from(BLUNDER_PGN) });
+  await page.getByTestId('game-link').click();
+  await page.getByTestId('run-quick').click();
+  await expect(page.getByTestId('analysis-status')).toHaveText('Análise concluída', { timeout: 120_000 });
+  await page.getByTestId('move-5').click();
+  // Every IndexedDB cursor now fails, as with a quota or I/O error inside the transaction.
+  await page.evaluate(() => {
+    IDBObjectStore.prototype.openCursor = () => {
+      throw new DOMException('simulated storage failure', 'UnknownError');
+    };
+  });
+  const create = page.getByTestId('create-exercise');
+  await create.click();
+  await expect(page.locator('.toasts')).toContainText('Não foi possível salvar o exercício');
+  await expect(create).toBeEnabled();
+  await expect(create).toContainText('Criar exercício desta posição');
 });

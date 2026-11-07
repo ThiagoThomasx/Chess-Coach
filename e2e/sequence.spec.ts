@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { Chess } from 'chess.js';
-import { playMove } from './helpers';
+import { playMove, readTable } from './helpers';
 
 // Two rooks vs king: 1.Ra7 (or Rb7) mates in two whichever king move Black chooses.
 const ROOKS = '6k1/8/8/8/8/8/1R6/R5K1 w - - 0 1';
@@ -58,7 +58,7 @@ const exercise = {
   },
 };
 
-test('a two-move exercise continues after the first correct move and is solved on the board', async ({ page }) => {
+async function seed(page: import('@playwright/test').Page, ex: typeof exercise): Promise<void> {
   await page.goto('/#/train');
   await expect(page.getByText(/Treinar/).first()).toBeVisible();
   await page.evaluate(async (ex) => {
@@ -74,9 +74,14 @@ test('a two-move exercise continues after the first correct move and is solved o
       tx.onerror = () => reject(tx.error);
     });
     db.close();
-  }, exercise);
+  }, ex);
+}
 
+test('a two-move exercise continues after the first correct move and is solved on the board', async ({ page }) => {
+  await seed(page, exercise);
   await page.goto('/#/train/seq-e2e');
+  // The theme is hidden until the attempt ends (audit M1).
+  await expect(page.getByTestId('exercise-title')).toHaveText('Exercício');
   await expect(page.getByTestId('sequence-progress')).toContainText('Mate · lance 1 de 2');
   await playMove(page, 'exercise-board', 'a1a7');
   await expect(page.getByTestId('exercise-feedback')).toContainText(/O adversário responde (Kf8|Kh8)/);
@@ -86,4 +91,39 @@ test('a two-move exercise continues after the first correct move and is solved o
   await expect(page.getByTestId('exercise-feedback')).toContainText('xeque-mate');
   await expect(page.getByTestId('next-review')).toContainText('Próxima revisão');
   await expect(page.getByText('✓ acerto')).toBeVisible();
+  await expect(page.getByTestId('exercise-title')).toHaveText('Mate disponível');
+});
+
+test('hint 1 is informative and solving again right after the answer is only practice (audit A1/A5)', async ({ page }) => {
+  await seed(page, { ...exercise, id: 'seq-retry' });
+  await page.goto('/#/train/seq-retry');
+  await page.getByTestId('hint').click();
+  const firstHint = await page.getByTestId('exercise-feedback').textContent();
+  expect(firstHint).not.toContain('Encontre o mate em 2');
+  expect(firstHint).toMatch(/xeque/);
+  await page.getByTestId('hint').click();
+  await page.getByTestId('hint').click();
+  await expect(page.getByTestId('exercise-feedback')).toContainText('O lance é Ra7');
+  await playMove(page, 'exercise-board', 'a1a7');
+  await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
+  await playMove(page, 'exercise-board', 'b2b8');
+  await expect(page.getByTestId('next-review')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Resolver de novo' }).click();
+  // Wait for the pieces to animate back to the start position before clicking.
+  await expect(page.locator('#exercise-board-square-a1 [data-piece]')).toBeVisible();
+  await expect(page.locator('#exercise-board-square-a7 [data-piece]')).toHaveCount(0);
+  await playMove(page, 'exercise-board', 'a1a7');
+  await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
+  await playMove(page, 'exercise-board', 'b2b8');
+  await expect(page.getByTestId('practice-note')).toBeVisible();
+  await expect(page.getByTestId('next-review')).toHaveCount(0);
+
+  const attempts = (await readTable<{ exerciseId: string; hintsUsed: number }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-retry');
+  expect(attempts).toHaveLength(1);
+  expect(attempts[0]?.hintsUsed).toBe(3);
+  const events = (await readTable<{ independent: boolean; ref: { exerciseId?: string } }>(page, 'skillEvents')).filter((e) => e.ref.exerciseId === 'seq-retry');
+  expect(events.some((e) => e.independent)).toBe(false);
+  const stored = (await readTable<{ id: string; srs: { box: number } }>(page, 'exercises')).find((e) => e.id === 'seq-retry');
+  expect(stored?.srs.box).toBe(0);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateSkill, estimateProfile, exerciseOutcome, eventsFromAttempt, targetDifficulty, eventsFromGame } from '../src/services/adaptation/skills';
+import { estimateSkill, estimateProfile, exerciseOutcome, eventsFromAttempt, targetDifficulty, eventsFromGame, hasPointEstimate } from '../src/services/adaptation/skills';
 import { nextTraining, errorThemes } from '../src/services/recommendations/recommend';
 import { applyUci } from '../src/services/chess/position';
 import { DAY_MS } from '../src/services/scheduling/srs';
@@ -26,11 +26,24 @@ describe('skill profile', () => {
   });
 
   it('rises with consistent independent successes and reaches provisional mastery', () => {
-    const events = Array.from({ length: 16 }, (_, i) => ev(1, i, { ref: { exerciseId: `ex${i}` } }));
+    const events = Array.from({ length: 16 }, (_, i) => ev(1, i, { ref: { exerciseId: `ex${i}` }, difficulty: i % 2 ? 3 : 2 }));
     const s = estimateSkill('tactics', events, NOW);
     expect(s.level).toBeGreaterThan(0.85);
     expect(s.confidence).toBe('provisional_mastery');
     expect(s.independentRate).toBe(1);
+  });
+
+  it('easy exercises alone do not consolidate a skill (Sprint 3)', () => {
+    const easy = Array.from({ length: 16 }, (_, i) => ev(1, i, { ref: { exerciseId: `ex${i}` }, difficulty: 1 }));
+    expect(estimateSkill('tactics', easy, NOW).confidence).toBe('consistent');
+  });
+
+  it('a skill clearly below 50% is flagged for review, not shown as "consistent" (Sprint 3)', () => {
+    // 2 of 10 right, steadily: no recent drop, not stale — but the 90% interval is entirely below 50%.
+    const weak = Array.from({ length: 10 }, (_, i) => ev(i % 5 === 0 ? 1 : 0, i, { ref: { exerciseId: `ex${i}` } }));
+    const s = estimateSkill('tactics', weak, NOW);
+    expect(s.interval![1]).toBeLessThan(0.5);
+    expect(s.confidence).toBe('needs_review');
   });
 
   it('falls after failures and changes in response to results', () => {
@@ -96,6 +109,45 @@ describe('skill profile', () => {
     expect(events.find((e) => e.skill === 'threats')?.outcome).toBe(0);
   });
 
+  describe('no positive evidence without a real choice (A6)', () => {
+    const review = (fenBefore: string, uci: string, over: Partial<MoveReview>): MoveReview => ({
+      ply: 12, san: '', uci, color: 'b', fenBefore, fenAfter: applyUci(fenBefore, uci)!, evalBefore: { kind: 'cp', value: 0 }, evalAfter: { kind: 'cp', value: 0 },
+      bestLine: [uci], winBefore: 50, winAfter: 50, winLoss: 0, classification: 'best', flags: [], depth: 16, ...over,
+    });
+    const positives = (r: MoveReview) => eventsFromGame('g', [r], {}, r.color, NOW).filter((e) => e.outcome > 0);
+
+    it('Légal 6…Ke7, the only legal move, yields no positive event', () => {
+      const r = review('rn1qkbnr/ppp2B1p/3p2p1/4N3/4P3/2N5/PPPP1PPP/R1BbK2R b KQkq - 0 6', 'e8e7', {
+        evalBefore: { kind: 'mate', value: 1 }, evalAfter: { kind: 'mate', value: 1 }, winBefore: 0, winAfter: 0, bestLine: ['e8e7', 'c3d5'], flags: ['defense_needed'],
+      });
+      expect(positives(r)).toEqual([]);
+    });
+
+    it('Ópera 16…Nxb8, the only legal move before mate, yields no tactics or defense event', () => {
+      const r = review('1Q2kb1r/p2n1ppp/4q3/4p1B1/4P3/8/PPP2PPP/2KR4 b k - 1 16', 'd7b8', {
+        evalBefore: { kind: 'mate', value: 1 }, evalAfter: { kind: 'mate', value: 1 }, winBefore: 0, winAfter: 0, bestLine: ['d7b8', 'd1d8'], flags: ['defense_needed'],
+      });
+      expect(positives(r)).toEqual([]);
+    });
+
+    it('moves inside an already forced mate yield no positive event even with several legal moves', () => {
+      const r = review('8/8/8/3k4/8/8/8/K5Q1 b - - 0 1', 'd5e4', {
+        evalBefore: { kind: 'mate', value: 9 }, evalAfter: { kind: 'mate', value: 9 }, winBefore: 0, winAfter: 0, classification: 'good', flags: ['defense_needed'],
+      });
+      expect(positives(r)).toEqual([]);
+    });
+
+    it('the only move that holds a balanced position counts as defense', () => {
+      const r = review('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1', 'e7e5', { winBefore: 45, winAfter: 45, flags: ['only_move'] });
+      expect(positives(r).map((e) => e.skill)).toContain('defense');
+    });
+  });
+
+  it('shows a point estimate only once the evidence is not insufficient (B4)', () => {
+    expect(hasPointEstimate(estimateSkill('tactics', [ev(0, 1)], NOW))).toBe(false);
+    expect(hasPointEstimate(estimateSkill('tactics', [ev(1, 1), ev(1, 2), ev(0, 3)], NOW))).toBe(true);
+  });
+
   it('caps the weight one game can add to a skill', () => {
     const fenBefore = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     const good: MoveReview = {
@@ -133,5 +185,33 @@ describe('recommendations', () => {
 
   it('ignores games where the user color is unknown', () => {
     expect(errorThemes([{ gameId: 'a', reviews: [r], replyLines: { 5: ['e5d4', 'c2c3'] } }]).size).toBe(0);
+  });
+
+  // 1.Qh2?? allows 1…Nf3+ forking king and queen (the audit's constructed fork).
+  const forkFen = '3qk3/8/8/8/3n4/8/2Q5/R3K3 w Q - 0 1';
+  const allowedFork: MoveReview = {
+    ply: 31, san: 'Qh2', uci: 'c2h2', color: 'w', fenBefore: forkFen, fenAfter: applyUci(forkFen, 'c2h2')!, evalBefore: { kind: 'cp', value: 0 }, evalAfter: { kind: 'cp', value: -900 },
+    bestLine: ['e1f1'], winBefore: 50, winAfter: 3, winLoss: 47, classification: 'blunder', flags: [], depth: 16,
+  };
+  const forkGames = ['a', 'b'].map((gameId) => ({ gameId, userColor: 'w' as const, reviews: [allowedFork], replyLines: { 31: ['d4f3', 'e1f1', 'f3h2', 'f1g2', 'h2g4', 'a1a7'] } }));
+
+  it('an allowed fork is reported as the opponent fork, never as a fork "not taken" (Sprint 3)', () => {
+    const rec = nextTraining({ games: forkGames, dueReviews: 0, totalGames: 2, profile: [] });
+    expect(rec.theme).toBe('fork');
+    expect(rec.title).toMatch(/do adversário/);
+    expect(rec.message).not.toMatch(/não aproveitad/);
+    // And the evidence lands on threat identification, not on own pattern recognition.
+    const events = eventsFromGame('a', [allowedFork], { 31: ['d4f3', 'e1f1', 'f3h2', 'f1g2', 'h2g4', 'a1a7'] }, 'w', NOW);
+    expect(events.some((e) => e.skill === 'threats' && e.outcome === 0)).toBe(true);
+    expect(events.some((e) => e.skill === 'patterns')).toBe(false);
+  });
+
+  it('without a recurring pattern or due reviews, recommends a skill flagged for review with its numbers (Sprint 3)', () => {
+    const weak = Array.from({ length: 10 }, (_, i) => ev(i % 5 === 0 ? 1 : 0, i, { skill: 'defense', ref: { exerciseId: `d${i}` } }));
+    const profile = [estimateSkill('defense', weak, NOW)];
+    const rec = nextTraining({ games: [{ gameId: 'a', userColor: 'w', reviews: [], replyLines: {} }], dueReviews: 0, totalGames: 1, profile });
+    expect(rec.kind).toBe('skill');
+    expect(rec.message).toMatch(/Defesa precisa de revisão \(taxa recente \d+%; estimativa entre \d+% e \d+%, em 10 evidência/);
+    expect(rec.action.to).toBe('/train?skill=defense');
   });
 });

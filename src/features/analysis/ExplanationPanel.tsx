@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { CheckCircle2, Dumbbell, Info } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { Game, MoveReview, PositionAnalysis, Settings } from '../../types/domain';
-import { explainMove } from '../../services/pedagogy/explain';
+import { ERROR_KIND_LABEL, explainMove } from '../../services/pedagogy/explain';
 import { FLAG_LABEL } from '../../services/analysis/classify';
 import { formatScore } from '../../services/analysis/evaluation';
 import { ClassBadge } from '../../components/feedback/ClassBadge';
@@ -20,10 +20,13 @@ type Props = {
   settings: Settings;
 };
 
+/** The six questions of an explanation, in reading order; empty sections are omitted. */
 const SECTIONS: [keyof ReturnType<typeof explainMove>, string][] = [
+  ['threat', 'Qual era a ameaça do adversário'],
+  ['consequence', 'Por que o lance não funcionou'],
   ['betterAlternative', 'Melhor alternativa encontrada'],
+  ['afterAlternative', 'O que acontece depois da alternativa'],
   ['why', 'Por que ela é superior'],
-  ['consequence', 'Ameaça ou consequência'],
   ['concept', 'Conceito'],
   ['recognize', 'Como reconhecer situações semelhantes'],
 ];
@@ -56,18 +59,29 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
       return;
     }
     setIsCreating(true);
-    const full = await completeExercise(ex, settings, getEngine());
-    const r = await addExercise(full);
-    setIsCreating(false);
-    setCreatedId(r.id);
-    toast(r.added ? 'Exercício criado' : 'Já existe um exercício para esta posição', r.added ? 'good' : 'info');
+    try {
+      const full = await completeExercise(ex, settings, getEngine());
+      const r = await addExercise(full);
+      setCreatedId(r.id);
+      toast(r.added ? 'Exercício criado' : 'Já existe um exercício para esta posição', r.added ? 'good' : 'info');
+    } catch {
+      // Engine or storage failure: the transaction in addExercise rolled back, so nothing was stored.
+      toast('Não foi possível salvar o exercício. Nada foi gravado; tente novamente.', 'bad');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
     <section className="panel fade-in" aria-labelledby="explain-title" data-testid="explanation">
       <div className="panel-head">
         <h2 id="explain-title">{e.title}</h2>
-        <ClassBadge value={review.classification} />
+        <div className="row">
+          <span className="tag" data-testid="error-kind">
+            {ERROR_KIND_LABEL[e.kind]}
+          </span>
+          <ClassBadge value={review.classification} />
+        </div>
       </div>
       <dl className="explain">
         <div>

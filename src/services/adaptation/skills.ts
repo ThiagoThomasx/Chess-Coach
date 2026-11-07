@@ -1,7 +1,9 @@
 import type { Attempt, ConfidenceLevel, Exercise, MoveReview, Skill, SkillEstimate, SkillEvent } from '../../types/domain';
+import { hasMateFor } from '../analysis/evaluation';
 import { gamePhase, settledSwing } from '../chess/material';
+import { legalMoveCount } from '../chess/position';
 import { enPrise } from '../chess/tactics';
-import { detectConcepts, THEME_SKILL } from '../pedagogy/concepts';
+import { detectConcepts, skillOf } from '../pedagogy/concepts';
 import { DAY_MS } from '../scheduling/srs';
 
 export const SKILLS: readonly Skill[] = ['tactics', 'calculation', 'threats', 'defense', 'strategy', 'openings', 'endgames', 'patterns'];
@@ -17,11 +19,16 @@ export const SKILL_LABEL: Record<Skill, string> = {
   patterns: 'Reconhecimento de padrões',
 };
 
+/**
+ * Four states shown to the player: insufficient evidence; developing (initial
+ * or consistent evidence, without mastery); consolidated (provisional
+ * mastery); needs review (stale, recent drop, or clearly below 50%).
+ */
 export const CONFIDENCE_LABEL: Record<ConfidenceLevel, string> = {
-  insufficient: 'Poucas evidências',
-  initial: 'Evidências iniciais',
-  consistent: 'Desempenho consistente',
-  provisional_mastery: 'Domínio provisório',
+  insufficient: 'Evidências insuficientes',
+  initial: 'Em desenvolvimento · evidências iniciais',
+  consistent: 'Em desenvolvimento',
+  provisional_mastery: 'Consolidada (provisório)',
   needs_review: 'Precisa revisar',
 };
 
@@ -63,13 +70,15 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
     if (r.color !== userColor) continue;
     const o = phaseOutcome(r.classification);
     if (o === null) continue;
+    // A forced move, or one inside an already forced mate, measures nothing positive.
+    if (o > 0 && !hadRealChoice(r)) continue;
     const ref = { gameId, ply: r.ply };
     const ev = (skill: Skill, outcome: number, weight: number): SkillEvent => ({ skill, at, outcome, weight, independent: true, source: 'game', ref });
     events.push(ev(PHASE_SKILL[gamePhase(r.fenBefore, r.ply)], o, WEIGHTS.gamePhase));
 
     if (o === 0) {
       const c = detectConcepts(r, replyLines[r.ply] ?? [])[0];
-      if (c && c.verified) events.push(ev(THEME_SKILL[c.theme], 0, WEIGHTS.gameConcept));
+      if (c && c.verified) events.push(ev(skillOf(c), 0, WEIGHTS.gameConcept));
       continue;
     }
     // Successes: only when the position offered a verifiable opportunity or threat.
@@ -77,7 +86,8 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
       const best = settledSwing(r.fenBefore, r.bestLine, r.color);
       if (best.settled && best.delta >= 2) events.push(ev('tactics', 1, WEIGHTS.gameOpportunity));
       if (r.flags.includes('mate_found')) events.push(ev('patterns', 1, WEIGHTS.gameOpportunity));
-      if (r.flags.includes('defense_needed')) events.push(ev('defense', 1, WEIGHTS.gameOpportunity));
+      // Defense: the only move that kept a position the mover was not winning.
+      if (r.flags.includes('only_move') && r.winBefore < DEFENSE_MAX_WIN) events.push(ev('defense', 1, WEIGHTS.gameOpportunity));
       // Legal-capture threats (SEE > 0) only; geometric attacks by pinned pieces do not count.
       const threatened = enPrise(r.fenBefore, r.color).length > 0;
       const stillThreatened = enPrise(r.fenAfter, r.color).length > 0;
@@ -85,6 +95,15 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
     }
   }
   return capPerSkill(events, MAX_GAME_WEIGHT_PER_SKILL);
+}
+
+/** Below this win expectancy (mover POV) holding the position counts as defending. */
+const DEFENSE_MAX_WIN = 60;
+
+/** The mover had more than one legal move and was not already mated by force. */
+function hadRealChoice(r: MoveReview): boolean {
+  const opponent = r.color === 'w' ? 'b' : 'w';
+  return legalMoveCount(r.fenBefore) > 1 && !hasMateFor(r.evalBefore, opponent);
 }
 
 /** One game contains few examples of each theme: its total weight per skill is capped. */
@@ -101,8 +120,13 @@ function capPerSkill(events: SkillEvent[], cap: number): SkillEvent[] {
 
 /** Weights decay with age (half-life) so the estimate follows recent performance. */
 export const HALF_LIFE_DAYS = 120;
-/** Mastery needs independent successes on this many distinct exercises of the skill. */
+/** Mastery needs independent successes on this many distinct exercises of the skill… */
 export const MASTERY_DISTINCT_EXERCISES = 5;
+/** …of which this many at difficulty ≥ MASTERY_MIN_DIFFICULTY (trivial captures alone do not consolidate a skill). */
+export const MASTERY_HARD_EXERCISES = 2;
+export const MASTERY_MIN_DIFFICULTY = 3;
+/** Upper credible bound below which a skill with some evidence is flagged for review (clearly under 50%). */
+const WEAK_UPPER_BOUND = 0.5;
 
 /**
  * Effective weight of each event: exponential age decay, and diminishing
@@ -195,8 +219,8 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   if (stale && rawEvidence >= 6) confidence = 'needs_review';
   else if (evidence < 2) confidence = 'insufficient';
   else if (evidence < 6) confidence = 'initial';
-  else if ((lastAt !== undefined && now - lastAt > STALE_DAYS * DAY_MS) || (recentRate !== null && recentRate < mean - 0.2)) confidence = 'needs_review';
-  else if (evidence >= 10 && mean >= 0.75 && interval[0] >= 0.6 && distinctIndependent(ex) >= MASTERY_DISTINCT_EXERCISES) confidence = 'provisional_mastery';
+  else if ((lastAt !== undefined && now - lastAt > STALE_DAYS * DAY_MS) || (recentRate !== null && recentRate < mean - 0.2) || interval[1] < WEAK_UPPER_BOUND) confidence = 'needs_review';
+  else if (evidence >= 10 && mean >= 0.75 && interval[0] >= 0.6 && distinctIndependent(ex) >= MASTERY_DISTINCT_EXERCISES && distinctIndependent(ex, MASTERY_MIN_DIFFICULTY) >= MASTERY_HARD_EXERCISES) confidence = 'provisional_mastery';
   else confidence = 'consistent';
 
   return {
@@ -215,8 +239,13 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   };
 }
 
-function distinctIndependent(ex: readonly SkillEvent[]): number {
-  return new Set(ex.filter((e) => e.independent && e.outcome === 1).map((e) => e.ref.exerciseId ?? '')).size;
+/** With insufficient evidence the point estimate is noise: show only the interval. */
+export function hasPointEstimate(s: SkillEstimate): boolean {
+  return s.level !== null && s.confidence !== 'insufficient';
+}
+
+function distinctIndependent(ex: readonly SkillEvent[], minDifficulty = 1): number {
+  return new Set(ex.filter((e) => e.independent && e.outcome === 1 && (e.difficulty ?? 1) >= minDifficulty).map((e) => e.ref.exerciseId ?? '')).size;
 }
 
 export function estimateProfile(events: readonly SkillEvent[], now: number): SkillEstimate[] {

@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js';
 import type { Color, Game, GameHeaders } from '../../types/domain';
-import { START_FEN } from '../chess/position';
+import { positionProblem, START_FEN } from '../chess/position';
 import { hashString, newId } from '../../utils/hash';
 
 export interface ParsedGame {
@@ -103,6 +103,9 @@ export function parseSingleGame(chunk: string, playerNames: readonly string[] = 
   const moves = chess.history();
   const rawHeaders = Object.fromEntries(Object.entries(chess.getHeaders()).filter(([, v]) => typeof v === 'string')) as Record<string, string>;
   const startFen = rawHeaders.FEN && rawHeaders.SetUp !== '0' ? rawHeaders.FEN : START_FEN;
+  // chess.js accepts some impossible positions that would crash the engine.
+  const problem = positionProblem(startFen);
+  if (problem) throw new Error(`Posição inicial impossível: ${problem}`);
   const headers = buildHeaders(rawHeaders);
   const warnings: string[] = [];
   if (moves.length === 0) throw new Error('Nenhum lance encontrado');

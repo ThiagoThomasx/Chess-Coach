@@ -1,4 +1,6 @@
+import { Chess, type PieceSymbol, type Square } from 'chess.js';
 import type { Exercise, PositionAnalysis } from '../../types/domain';
+import { attackedTargets } from '../chess/tactics';
 import { applyUci, terminalState, uciToSan } from '../chess/position';
 import { winPercentFor } from '../analysis/evaluation';
 
@@ -47,10 +49,36 @@ export function judgeWithEngine(ex: Exercise, afterAnalysis: PositionAnalysis): 
   return { accepted: afterAnalysis.complete && winLoss <= ex.tolerance, winLoss };
 }
 
-/** Progressive hints for the current node of a sequence: 1 = objective, 2 = piece to move, 3 = the move. */
-export function hintForNode(objective: string, accepted: readonly { uci: string; san: string }[], level: number): { text: string; square?: string } {
+/**
+ * First hint: the kind of move that works, computed from the position
+ * (mate, check, capture, double attack, or a quiet move of a given piece).
+ * It narrows the search without naming the square or the move.
+ */
+export function motifHint(fen: string, uci: string): string | null {
+  const after = applyUci(fen, uci);
+  const chess = new Chess(fen);
+  const piece = chess.get(uci.slice(0, 2) as Square);
+  if (!after || !piece) return null;
+  if (terminalState(after) === 'checkmate') return 'Existe um xeque-mate imediato.';
+  const isCapture = !!chess.get(uci.slice(2, 4) as Square) || (piece.type === 'p' && uci[0] !== uci[2]);
+  const isCheck = new Chess(after).inCheck();
+  if (isCheck && isCapture) return 'O lance certo captura com xeque.';
+  if (isCheck) return 'O lance certo dá xeque.';
+  if (isCapture) return 'O lance certo é uma captura.';
+  if (attackedTargets(after, uci.slice(2, 4) as Square).length >= 2) return 'O lance certo ataca duas peças valiosas ao mesmo tempo.';
+  // Naming a piece the solver has only one of would point at it as hint 2 does.
+  const sameType = chess.board().flat().filter((sq) => sq && sq.color === piece.color && sq.type === piece.type).length;
+  const quiet = 'O lance certo é um lance tranquilo (sem captura nem xeque)';
+  return sameType > 1 ? `${quiet} de ${PIECE_OF_PT[piece.type]}.` : `${quiet}.`;
+}
+
+const PIECE_OF_PT: Record<PieceSymbol, string> = { p: 'um peão', n: 'um cavalo', b: 'um bispo', r: 'uma torre', q: 'uma dama', k: 'o rei' };
+
+/** Progressive hints for the current node: 1 = kind of move (motifHint), 2 = piece to move, 3 = the move. */
+export function hintForNode(fen: string, objective: string, accepted: readonly { uci: string; san: string }[], level: number): { text: string; square?: string } {
   const best = accepted[0];
-  if (!best || level <= 1) return { text: `Objetivo: ${objective}` };
+  if (!best) return { text: `Objetivo: ${objective}` };
+  if (level <= 1) return { text: motifHint(fen, best.uci) ?? `Objetivo: ${objective}` };
   const from = best.uci.slice(0, 2);
   if (level === 2) return { text: `A peça a mover está em ${from}.`, square: from };
   return { text: `O lance é ${best.san}.`, square: from };
