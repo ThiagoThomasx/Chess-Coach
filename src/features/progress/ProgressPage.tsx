@@ -30,6 +30,7 @@ export function ProgressPage() {
   if (!data) return <div className="page muted">Carregando…</div>;
   const now = Date.now();
   const inputs = toAnalyzedInputs(data.games, data.analyses);
+  const withoutColor = inputs.filter((i) => !i.userColor).length;
   const profile = estimateProfile(data.events, now);
   const st = attemptStats(data.attempts);
   const themes = themeCounts(inputs);
@@ -122,6 +123,11 @@ export function ProgressPage() {
             <h2>Distribuição dos seus lances</h2>
           </div>
           <ClassDistributionChart dist={errorDistribution(inputs)} />
+          {withoutColor > 0 && (
+            <p className="xs faint" data-testid="no-color-note">
+              {withoutColor} partida(s) analisada(s) sem a sua cor definida não entram aqui. Defina a cor na lista de partidas.
+            </p>
+          )}
         </section>
       </div>
 

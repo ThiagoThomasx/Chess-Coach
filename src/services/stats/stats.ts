@@ -85,11 +85,15 @@ export function analysesOverTime(analyses: readonly GameAnalysis[]): { day: stri
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, count]) => ({ day, count }));
 }
 
-/** Distribution of move classes on the user's side across analyzed games. */
+/**
+ * Distribution of move classes on the user's side across analyzed games.
+ * Games without a user color are left out: their moves cannot be attributed.
+ */
 export function errorDistribution(inputs: readonly AnalyzedGameInput[]): Record<MoveClass, number> {
   const out: Record<MoveClass, number> = { best: 0, excellent: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, inconclusive: 0, book: 0 };
   for (const g of inputs) {
-    for (const r of g.reviews) if (!g.userColor || r.color === g.userColor) out[r.classification]++;
+    if (!g.userColor) continue;
+    for (const r of g.reviews) if (r.color === g.userColor) out[r.classification]++;
   }
   return out;
 }

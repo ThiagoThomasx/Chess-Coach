@@ -257,6 +257,8 @@ test('dashboard "Mais detalhes" counts every pending marked position, not just t
   await page.goto('/#/');
   const more = page.getByTestId('dash-more');
   await expect(more.locator('summary')).toContainText('7 posição(ões) marcada(s)');
+  // Sprint 4.3: the "Revisões pendentes" card counts all 7 too (no exercise is due here).
+  await expect(page.getByTestId('stat-pending-reviews')).toHaveText('7');
   // Collapsed, not removed: opening it shows the list (capped at 5 entries, as before).
   await more.locator('summary').click();
   await expect(more.getByText(/Meia-jogada \d/)).toHaveCount(5);

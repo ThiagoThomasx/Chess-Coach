@@ -57,12 +57,16 @@ export async function getGame(id: string): Promise<Game | undefined> {
   return getDb().games.get(id);
 }
 
-export async function setUserColor(id: string, color: Color | undefined): Promise<void> {
+/** Sets (or clears) the user's color atomically. False when the game does not exist. */
+export async function setUserColor(id: string, color: Color | undefined): Promise<boolean> {
   const db = getDb();
-  const g = await db.games.get(id);
-  if (!g) return;
-  const { userColor: _drop, ...rest } = g;
-  await db.games.put(color ? { ...rest, userColor: color } : rest);
+  return db.transaction('rw', db.games, async () => {
+    const g = await db.games.get(id);
+    if (!g) return false;
+    const { userColor: _drop, ...rest } = g;
+    await db.games.put(color ? { ...rest, userColor: color } : rest);
+    return true;
+  });
 }
 
 /** Deletes a game and everything derived from it. */

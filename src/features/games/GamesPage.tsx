@@ -2,7 +2,11 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate } from 'react-router-dom';
 import { Library, Trash2 } from 'lucide-react';
 import { getDb } from '../../db/database';
-import { deleteGame, setUserColor } from '../../db/gamesRepo';
+import { deleteGame } from '../../db/gamesRepo';
+import { changeUserColor, derivationMessage } from '../../services/analysis/analysisRunner';
+import { getEngine } from '../../services/engine/engineService';
+import { useSettings } from '../../hooks/useSettings';
+import { useToast } from '../../components/feedback/Toast';
 import { ImportPanel } from './ImportPanel';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { matchOpening } from '../../services/openings/library';
@@ -26,6 +30,23 @@ export function GamesPage() {
   const games = useLiveQuery(() => getDb().games.orderBy('importedAt').reverse().toArray(), [], undefined);
   const statuses = useLiveQuery(async () => new Map((await getDb().analyses.toArray()).map((a) => [a.gameId, a.status])), [], new Map<string, AnalysisStatus>());
   const imports = useLiveQuery(() => getDb().imports.orderBy('importedAt').reverse().limit(10).toArray(), [], []);
+  const settings = useSettings();
+  const toast = useToast();
+
+  /** Saves the color; an analyzed game gets its exercises and evidence right away. */
+  const onColor = async (gameId: string, color: Color | undefined) => {
+    try {
+      const d = await changeUserColor(gameId, color, settings, getEngine);
+      if (!d) {
+        if (color && statuses.get(gameId) === 'running') toast('Cor salva. Os exercícios serão gerados quando a análise terminar.', 'info');
+        return;
+      }
+      if (d.hasUserColor) toast(derivationMessage(d, 'Cor salva.'), 'good');
+      else toast('Cor removida. Os lances desta partida deixam de contar no seu perfil.', 'info');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Não foi possível salvar a cor.', 'bad');
+    }
+  };
 
   return (
     <div className="page">
@@ -105,7 +126,7 @@ export function GamesPage() {
                             className="select"
                             aria-label="Cor usada por você"
                             value={g.userColor ?? ''}
-                            onChange={(e) => void setUserColor(g.id, (e.target.value || undefined) as Color | undefined)}
+                            onChange={(e) => void onColor(g.id, (e.target.value || undefined) as Color | undefined)}
                           >
                             <option value="">?</option>
                             <option value="w">Brancas</option>
