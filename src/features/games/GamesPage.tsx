@@ -2,8 +2,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Link, useNavigate } from 'react-router-dom';
 import { Library, Trash2 } from 'lucide-react';
 import { getDb } from '../../db/database';
-import { deleteGame } from '../../db/gamesRepo';
-import { changeUserColor, derivationMessage } from '../../services/analysis/analysisRunner';
+import { deleteGame, getGame } from '../../db/gamesRepo';
+import { changeUserColor, colorChangeFailureMessage, derivationMessage, isRunning } from '../../services/analysis/analysisRunner';
 import { getEngine } from '../../services/engine/engineService';
 import { useSettings } from '../../hooks/useSettings';
 import { useToast } from '../../components/feedback/Toast';
@@ -38,13 +38,19 @@ export function GamesPage() {
     try {
       const d = await changeUserColor(gameId, color, settings, getEngine);
       if (!d) {
-        if (color && statuses.get(gameId) === 'running') toast('Cor salva. Os exercícios serão gerados quando a análise terminar.', 'info');
+        // The stored status stays 'pending' until the first position is done: also ask the runner.
+        if (color && (isRunning(gameId) || statuses.get(gameId) === 'running')) toast('Cor salva. Os exercícios serão gerados quando a análise terminar.', 'info');
         return;
       }
       if (d.hasUserColor) toast(derivationMessage(d, 'Cor salva.'), 'good');
       else toast('Cor removida. Os lances desta partida deixam de contar no seu perfil.', 'info');
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Não foi possível salvar a cor.', 'bad');
+      console.error('ChessQuest: falha ao aplicar a cor da partida', gameId, e);
+      const saved = await getGame(gameId).then(
+        (g) => g !== undefined && g.userColor === color,
+        () => false,
+      );
+      toast(colorChangeFailureMessage(saved, color), saved ? 'info' : 'bad');
     }
   };
 

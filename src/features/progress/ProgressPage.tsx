@@ -114,8 +114,9 @@ export function ProgressPage() {
         </section>
         <section className="panel">
           <div className="panel-head">
-            <h2>Partidas analisadas ao longo do tempo</h2>
+            <h2>Análises feitas por dia</h2>
           </div>
+          <p className="xs muted">Dia em que cada análise foi concluída, e não o dia em que a partida foi jogada.</p>
           <CountByDayChart data={analysesOverTime(data.analyses)} name="Partidas analisadas" />
         </section>
         <section className="panel">

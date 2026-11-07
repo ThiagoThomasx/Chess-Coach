@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, isSacrifice, selectExercisePositions } from '../src/services/exercises/generate';
-import { validateStep, judgeWithEngine, hintFor, hintForNode } from '../src/services/exercises/validate';
+import { validateStep, judgeWithEngine, hintFor, hintForNode, attemptResult, MAX_HINTS } from '../src/services/exercises/validate';
+import { exerciseOutcome } from '../src/services/adaptation/skills';
 import { nextSrs, outcomeOf, DAY_MS, RETRY_DELAY_MS } from '../src/services/scheduling/srs';
 import { applyUci, isValidFen, replayGame } from '../src/services/chess/position';
 import { reviewMove } from '../src/services/analysis/gameAnalyzer';
@@ -216,5 +217,41 @@ describe('Sprint 3: exercise quality', () => {
     expect(isSacrifice(fen, 'd2h6')).toBe(true);
     expect(isSacrifice('4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1', 'd2d5')).toBe(false);
     expect(estimateDifficulty(fen, ['d2h6', 'g7h6', 'h4f6'], 'missed_mate', 1)).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('the hint that names the move counts as a revealed solution (Sprint 4.4, E2)', () => {
+  const NOW = 1_000_000_000;
+  const recorded = (correct: boolean, revealed: boolean, hints: number) => {
+    const r = attemptResult(correct, revealed, hints);
+    return { ...r, credit: exerciseOutcome({ ...r, hintsUsed: hints }), srs: nextSrs({ box: 3, dueAt: NOW }, outcomeOf(r.correct, hints, r.revealed), NOW) };
+  };
+
+  it('solving after the last hint records a revealed attempt: no credit, back in 10 minutes', () => {
+    const r = recorded(true, false, MAX_HINTS);
+    expect(r).toMatchObject({ correct: false, revealed: true, credit: 0 });
+    expect(r.srs).toEqual({ box: 0, dueAt: NOW + RETRY_DELAY_MS, lastReviewedAt: NOW });
+  });
+
+  it('hints 1 and 2 still count as an assisted success with partial credit', () => {
+    for (const hints of [1, 2]) {
+      const r = recorded(true, false, hints);
+      expect(r).toMatchObject({ correct: true, revealed: false, credit: 1 - 0.25 * hints });
+      expect(r.srs.box).toBe(3); // assisted: box unchanged
+      expect(r.srs.dueAt).toBeGreaterThanOrEqual(NOW + DAY_MS);
+    }
+  });
+
+  it('without hints, failures and reveals are unchanged', () => {
+    expect(attemptResult(true, false, 0)).toEqual({ correct: true, revealed: false });
+    expect(attemptResult(false, false, 0)).toEqual({ correct: false, revealed: false });
+    expect(attemptResult(false, true, 1)).toEqual({ correct: false, revealed: true });
+  });
+
+  it('the last hint is the one that names the move', () => {
+    const accepted = [{ uci: 'a1a7', san: 'Ra7' }];
+    const fen = '6k1/5ppp/8/8/8/8/1Q6/R5K1 w - - 0 1';
+    expect(hintForNode(fen, 'x', accepted, MAX_HINTS - 1).text).not.toContain('Ra7');
+    expect(hintForNode(fen, 'x', accepted, MAX_HINTS).text).toContain('Ra7');
   });
 });

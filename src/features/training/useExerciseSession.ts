@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Exercise, Settings } from '../../types/domain';
 import { applyUci, uciToSan } from '../../services/chess/position';
-import { hintForNode, MAX_HINTS } from '../../services/exercises/validate';
+import { attemptResult, hintForNode, MAX_HINTS } from '../../services/exercises/validate';
 import { mainLine, normalizeExercise, playSolverMove, type SolveState } from '../../services/exercises/sequence';
 import { recordAttempt } from '../../db/trainingRepo';
 import { getEngine } from '../../services/engine/engineService';
@@ -61,11 +61,14 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     setBadge(b ? { ...b, square: uci.slice(2, 4) } : null);
   };
 
+  /** The last hint names the move: from then on the attempt is a revealed solution, not a success. */
+  const moveGiven = hints >= MAX_HINTS;
+
   const finish = async (correct: boolean, revealed: boolean, played: string[]) => {
     // A retry after a failure in the same session counts as assistance.
     const recorded = await recordAttempt(
       raw,
-      { exerciseId: raw.id, at: Date.now(), correct, hintsUsed: hints + retries, revealed, timeMs: Date.now() - startedAt.current, moves: played },
+      { exerciseId: raw.id, at: Date.now(), ...attemptResult(correct, revealed, hints), hintsUsed: hints + retries, timeMs: Date.now() - startedAt.current, moves: played },
       settings.srsIntervalsDays,
     );
     setPractice(recorded.practice);
@@ -113,7 +116,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
             setFen(v.fen);
           }
           setStatus('solved');
-          setFeedback({ kind: 'good', text: v.message });
+          setFeedback(moveGiven ? { kind: 'warn', text: `${v.message} Como a dica mostrou o lance, esta tentativa conta como solução revelada.` } : { kind: 'good', text: v.message });
           void finish(true, false, played);
           return;
         case 'continue':
@@ -140,7 +143,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     const h = hintForNode(solve.fen, ex.objective, solve.node.accepted, level);
     setHints(level);
     setHintSquare(h.square ?? null);
-    setFeedback({ kind: 'info', text: h.text });
+    setFeedback({ kind: 'info', text: level >= MAX_HINTS ? `${h.text} A partir de agora, esta tentativa conta como solução revelada.` : h.text });
   };
 
   const reveal = () => {

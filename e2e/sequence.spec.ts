@@ -102,12 +102,16 @@ test('hint 1 is informative and solving again right after the answer is only pra
   expect(firstHint).not.toContain('Encontre o mate em 2');
   expect(firstHint).toMatch(/xeque/);
   await page.getByTestId('hint').click();
+  // The last hint names the move, and the button warns about it before (Sprint 4.4, E2).
+  await expect(page.getByTestId('hint')).toHaveText(/Mostrar o lance \(conta como revelada\)/);
   await page.getByTestId('hint').click();
   await expect(page.getByTestId('exercise-feedback')).toContainText('O lance é Ra7');
+  await expect(page.getByTestId('exercise-feedback')).toContainText('conta como solução revelada');
   await playMove(page, 'exercise-board', 'a1a7');
   await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
   await playMove(page, 'exercise-board', 'b2b8');
   await expect(page.getByTestId('next-review')).toBeVisible();
+  await expect(page.getByTestId('exercise-feedback')).toContainText('conta como solução revelada');
 
   await page.getByRole('button', { name: 'Resolver de novo' }).click();
   // Wait for the pieces to animate back to the start position before clicking.
@@ -119,9 +123,10 @@ test('hint 1 is informative and solving again right after the answer is only pra
   await expect(page.getByTestId('practice-note')).toBeVisible();
   await expect(page.getByTestId('next-review')).toHaveCount(0);
 
-  const attempts = (await readTable<{ exerciseId: string; hintsUsed: number }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-retry');
+  const attempts = (await readTable<{ exerciseId: string; hintsUsed: number; correct: boolean; revealed: boolean }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-retry');
   expect(attempts).toHaveLength(1);
   expect(attempts[0]?.hintsUsed).toBe(3);
+  expect(attempts[0]).toMatchObject({ correct: false, revealed: true });
   const events = (await readTable<{ independent: boolean; ref: { exerciseId?: string } }>(page, 'skillEvents')).filter((e) => e.ref.exerciseId === 'seq-retry');
   expect(events.some((e) => e.independent)).toBe(false);
   const stored = (await readTable<{ id: string; srs: { box: number } }>(page, 'exercises')).find((e) => e.id === 'seq-retry');

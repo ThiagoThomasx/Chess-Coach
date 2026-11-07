@@ -1,6 +1,7 @@
 import type { Bookmark, GameAnalysis, PositionAnalysis, SkillEvent } from '../types/domain';
 import { fenKey, type EvalCache } from '../services/analysis/gameAnalyzer';
 import { newId } from '../utils/hash';
+import { gameEvidenceTime } from '../services/games/gameDate';
 import { getDb } from './database';
 
 export async function getAnalysis(gameId: string): Promise<GameAnalysis | undefined> {
@@ -45,6 +46,28 @@ export async function replaceGameSkillEvents(gameId: string, events: SkillEvent[
   await db.transaction('rw', db.skillEvents, async () => {
     await db.skillEvents.where('ref.gameId').equals(gameId).and((e) => e.source === 'game').delete();
     if (events.length) await db.skillEvents.bulkAdd(events);
+  });
+}
+
+/**
+ * Re-dates stored game evidence to the time its game was played (Sprint 4.4).
+ * Evidence saved before stored the analysis time. Only the `at` of
+ * `source: 'game'` events changes: nothing is created or deleted and the
+ * engine is not used. Idempotent (events already right are left alone), so
+ * it can run on every start. Returns how many events were re-dated.
+ */
+export async function redateGameEvidence(): Promise<number> {
+  const db = getDb();
+  return db.transaction('rw', db.games, db.skillEvents, async () => {
+    const games = new Map((await db.games.toArray()).map((g) => [g.id, g]));
+    const stale = (await db.skillEvents.filter((e) => e.source === 'game').toArray()).flatMap((e) => {
+      const game = e.ref.gameId ? games.get(e.ref.gameId) : undefined;
+      if (!game || e.id === undefined) return [];
+      const at = gameEvidenceTime(game, e.at);
+      return at === e.at ? [] : [{ key: e.id, changes: { at } }];
+    });
+    if (stale.length) await db.skillEvents.bulkUpdate(stale);
+    return stale.length;
   });
 }
 

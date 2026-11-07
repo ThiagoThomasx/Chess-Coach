@@ -2,7 +2,7 @@
 
 - **Branch:** `feat/sprint4-3-reliable-training-loop`, criada a partir de `main` em `4445f72` (CI pós-merge do PR #4: run `42342167980`, sucesso).
 - **Data:** 2026-11-07.
-- **Situação:** PR #5 aberto (commit `1031e60`). As correções da auditoria (§6) estão implementadas e testadas localmente, **ainda não commitadas**.
+- **Situação:** integrada na `main` pelo PR #5 (merge commit `e63c59b`, 2026-11-07). Commits: `1031e60` (sprint) e `7870a0a` (correções da auditoria, §6). CI pós-merge verde (run `42384359803`). Ver `SPRINT4-3-AUDITORIA-POS-MERGE.md`.
 - **Origem:** auditoria de entrada da Sprint 4.3, com escopo aprovado pelo usuário.
 
 ## 1. Objetivo

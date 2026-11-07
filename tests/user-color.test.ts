@@ -4,7 +4,7 @@ import { Chess } from 'chess.js';
 import { ChessQuestDB, getDb, setDb } from '../src/db/database';
 import { deleteGame, getGame, importPgn, setUserColor } from '../src/db/gamesRepo';
 import { DEFAULT_SETTINGS } from '../src/db/settings';
-import { changeUserColor, derivationMessage, reconcileDerivations, startAnalysis } from '../src/services/analysis/analysisRunner';
+import { changeUserColor, colorChangeFailureMessage, derivationMessage, reconcileDerivations, startAnalysis } from '../src/services/analysis/analysisRunner';
 import type { EngineLike } from '../src/services/analysis/gameAnalyzer';
 import { positionsOf } from '../src/services/chess/position';
 import { materialBalance } from '../src/services/chess/material';
@@ -73,17 +73,63 @@ describe('user color and derived training data (Sprint 4.3)', () => {
     expect(events.every((e) => (e.ref.ply ?? 0) % 2 === 1)).toBe(true); // White moves only
   });
 
-  it('switching sides replaces the game evidence; exercises already created are kept', async () => {
+  it('switching sides replaces the game evidence and removes the never-attempted exercises of the old side (decision D3)', async () => {
     const game = await importedGame();
     await startAnalysis(game, settings, scriptedEngine(game));
     await changeUserColor(game.id, 'w', settings);
+    expect(await getDb().exercises.count()).toBe(1);
 
     const d = await changeUserColor(game.id, 'b', settings);
-    expect(d?.hasUserColor).toBe(true);
+    expect(d).toEqual({ hasUserColor: true, exercisesAdded: 0, exercisesRemoved: 1 });
+    expect(derivationMessage(d, 'Cor salva.')).toBe('Cor salva. Perfil atualizado; nenhum exercício novo. 1 exercício(s) nunca tentado(s) do outro lado foram removidos.');
     const events = await gameEvents(game.id);
     expect(events.length).toBeGreaterThan(0);
     expect(events.every((e) => (e.ref.ply ?? 1) % 2 === 0)).toBe(true); // Black moves only
+    expect(await getDb().exercises.count()).toBe(0);
+  });
+
+  it('an old-side exercise already attempted is kept with its history when switching sides (decision D3)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await changeUserColor(game.id, 'w', settings);
+    const [ex] = await getDb().exercises.toArray();
+    if (!ex) throw new Error('no exercise');
+    await getDb().attempts.add({ exerciseId: ex.id, at: Date.now(), correct: true, hintsUsed: 0, revealed: false, timeMs: 1, moves: [] });
+
+    const d = await changeUserColor(game.id, 'b', settings);
+    expect(d?.exercisesRemoved).toBeUndefined();
+    expect((await getDb().exercises.toArray()).map((e) => e.id)).toEqual([ex.id]);
+    expect(await getDb().attempts.count()).toBe(1);
+  });
+
+  it('clearing the color or setting it the first time removes no exercise (decision D3)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await changeUserColor(game.id, 'w', settings);
+    await changeUserColor(game.id, undefined, settings);
     expect(await getDb().exercises.count()).toBe(1);
+    await changeUserColor(game.id, 'w', settings);
+    expect(await getDb().exercises.count()).toBe(1);
+  });
+
+  it('switching sides while the game has no complete analysis removes nothing silently (review M2)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await changeUserColor(game.id, 'w', settings);
+    await getDb().analyses.update(game.id, { status: 'running' }); // e.g. a deeper re-analysis in progress
+    expect(await changeUserColor(game.id, 'b', settings)).toBeNull();
+    expect(await getDb().exercises.count()).toBe(1);
+  });
+
+  it('switching sides keeps the exercises of other games (decision D3)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await changeUserColor(game.id, 'w', settings);
+    const [ex] = await getDb().exercises.toArray();
+    if (!ex) throw new Error('no exercise');
+    await getDb().exercises.add({ ...ex, id: 'other', gameId: 'other-game', fen: '6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1' });
+    await changeUserColor(game.id, 'b', settings);
+    expect((await getDb().exercises.toArray()).map((e) => e.id)).toEqual(['other']);
   });
 
   it('clearing the color removes the game evidence (it is no longer known whose moves they were)', async () => {
@@ -259,7 +305,8 @@ describe('user color and derived training data (Sprint 4.3)', () => {
     await changeUserColor(game.id, 'w', one); // deriving White again must not pick a new position
     await getDb().analyses.update(game.id, { derivation: 'pending' });
     await reconcileDerivations(one);
-    expect((await white()).map((e) => e.id)).toEqual([firstPick?.id]);
+    // The never-attempted pick was removed by the switch to Black (D3) and rebuilt for the same position.
+    expect((await white()).map((e) => e.fen)).toEqual([firstPick?.fen]);
   });
 
   it('startup reconciliation leaves finished and pre-4.3 analyses alone', async () => {
@@ -342,8 +389,57 @@ describe('user color and derived training data (Sprint 4.3)', () => {
     expect(await getDb().exercises.count()).toBe(0);
   });
 
+  it('a derivation that fails after the color is saved keeps the color and leaves the work pending (audit P3-1)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    const analysis = await getDb().analyses.get(game.id);
+    if (!analysis) throw new Error('analysis missing');
+    await getDb().analyses.put({ ...analysis, reviews: undefined as never }); // makes the derivation throw
+
+    await expect(changeUserColor(game.id, 'w', settings)).rejects.toThrow();
+
+    expect((await getGame(game.id))?.userColor).toBe('w');
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('pending');
+    expect(colorChangeFailureMessage(true, 'w')).toBe('Cor salva. Os exercícios não puderam ser gerados agora; o app tentará de novo na próxima abertura.');
+  });
+
+  it('an error seen by the quick analysis that the deeper tree search accepts creates no exercise (Sprint 4.4, O1)', async () => {
+    const game = await importedGame();
+    const base = scriptedEngine(game);
+    const [, , , , before3Nd4, after3Nd4] = positionsOf(game.moves);
+    // At the tree depth (16) 3.Nd4 is as good as 3.Bc4; the quick analysis (11) still calls it a blunder.
+    const deeper: EngineLike = {
+      async analyze(req) {
+        const r = await base.analyze(req);
+        if ((req.depth ?? 0) < 16) return r;
+        const equal = { kind: 'cp' as const, value: 0 };
+        if (req.fen === after3Nd4) return { ...r, lines: r.lines.map((l) => ({ ...l, score: equal })) };
+        if (req.fen !== before3Nd4) return r;
+        const line = (uci: string, multipv: number) => ({ multipv, score: equal, pv: [uci], depth: req.depth ?? 16 });
+        return { ...r, lines: [line('f1c4', 1), line('f3d4', 2)] };
+      },
+    };
+    const full = { ...settings, analysisDepth: 16 };
+    await startAnalysis(game, full, deeper, 11);
+    expect((await getDb().analyses.get(game.id))?.reviews.find((r) => r.ply === 5)?.classification).toBe('blunder');
+
+    const d = await changeUserColor(game.id, 'w', full, () => deeper);
+    expect(d).toEqual({ hasUserColor: true, exercisesAdded: 0 });
+    expect(await getDb().exercises.count()).toBe(0);
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
+  });
+
   it('changing the color of an unknown game does nothing', async () => {
     expect(await changeUserColor('missing', 'w', settings)).toBeNull();
+  });
+});
+
+describe('color change failure message (audit P3-1)', () => {
+  it('never says the color was not saved when it was', () => {
+    expect(colorChangeFailureMessage(false, 'w')).toBe('Não foi possível salvar a cor. Tente de novo.');
+    expect(colorChangeFailureMessage(false, undefined)).toBe('Não foi possível salvar a cor. Tente de novo.');
+    expect(colorChangeFailureMessage(true, 'b')).toMatch(/^Cor salva\. .*próxima abertura\.$/);
+    expect(colorChangeFailureMessage(true, undefined)).toMatch(/^Cor removida\. .*próxima abertura\.$/);
   });
 });
 
