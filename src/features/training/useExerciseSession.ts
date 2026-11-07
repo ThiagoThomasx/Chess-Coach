@@ -40,6 +40,8 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
   const [practice, setPractice] = useState(false);
   const [badge, setBadge] = useState<PlacedMoveBadge | null>(null);
   const startedAt = useRef(Date.now());
+  /** This run already recorded a revealed attempt (solution shown, or the move named by the last hint). */
+  const revealedRun = useRef(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
@@ -64,11 +66,15 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
   /** The last hint names the move: from then on the attempt is a revealed solution, not a success. */
   const moveGiven = hints >= MAX_HINTS;
 
-  const finish = async (correct: boolean, revealed: boolean, played: string[]) => {
+  const finish = async (correct: boolean, revealed: boolean, played: string[], hintsShown = hints) => {
+    // Once the run is recorded as revealed, its end (solved, failed, solution shown) records nothing more.
+    if (revealedRun.current) return;
+    const result = attemptResult(correct, revealed, hintsShown);
+    if (result.revealed) revealedRun.current = true;
     // A retry after a failure in the same session counts as assistance.
     const recorded = await recordAttempt(
       raw,
-      { exerciseId: raw.id, at: Date.now(), ...attemptResult(correct, revealed, hints), hintsUsed: hints + retries, timeMs: Date.now() - startedAt.current, moves: played },
+      { exerciseId: raw.id, at: Date.now(), ...result, hintsUsed: hintsShown + retries, timeMs: Date.now() - startedAt.current, moves: played },
       settings.srsIntervalsDays,
     );
     setPractice(recorded.practice);
@@ -144,6 +150,9 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     setHints(level);
     setHintSquare(h.square ?? null);
     setFeedback({ kind: 'info', text: level >= MAX_HINTS ? `${h.text} A partir de agora, esta tentativa conta como solução revelada.` : h.text });
+    // Recorded when the move is shown, not when it is played: leaving or reloading the screen
+    // afterwards must not turn the named move into an independent success (audit A2-1).
+    if (level >= MAX_HINTS) void finish(false, true, moves, level);
   };
 
   const reveal = () => {
@@ -171,7 +180,9 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
 
   const retry = () => {
     timers.current.forEach(clearTimeout);
-    setRetries((r) => (status === 'failed' || status === 'revealed' ? r + 1 : 0));
+    // A run that saw the solution (or the move named by the last hint) makes the retry assisted (audit A2-2).
+    setRetries((r) => (status === 'failed' || status === 'revealed' || revealedRun.current ? r + 1 : 0));
+    revealedRun.current = false;
     setHints(0);
     setSolve(initial);
     setFen(ex.fen);

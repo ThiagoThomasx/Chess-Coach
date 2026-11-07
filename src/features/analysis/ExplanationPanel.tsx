@@ -61,7 +61,7 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
     setIsCreating(true);
     try {
       const full = await completeExercise(ex, settings, getEngine());
-      if (acceptsPlayedMove(full, review.uci)) {
+      if (acceptsPlayedMove(full, review.uci, before.depth)) {
         toast('Numa verificação mais profunda, o lance jogado está entre os aceitos: não há erro a treinar nesta posição.', 'warn');
         return;
       }

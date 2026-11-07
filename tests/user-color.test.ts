@@ -429,6 +429,31 @@ describe('user color and derived training data (Sprint 4.3)', () => {
     expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
   });
 
+  it('a shallower tree does not discard an error the deeper analysis found (audit A5-1)', async () => {
+    const game = await importedGame();
+    const [, , , , before3Nd4, after3Nd4] = positionsOf(game.moves);
+    // Depth 20 (the configured analysis): 3.Nd4 is a blunder. Depth 16 (the tree cap): it looks equal.
+    const engine: EngineLike = {
+      async analyze({ fen, depth = 12, multiPv = 1 }) {
+        const deep = depth >= 20;
+        const score = { kind: 'cp' as const, value: fen === after3Nd4 && deep ? -300 : fen === after3Nd4 ? 0 : materialBalance(fen, 'w') * 100 };
+        const line = (uci: string, multipv: number) => ({ multipv, score, pv: [uci], depth });
+        if (fen === before3Nd4) return { fen, depth, multiPv, lines: deep ? [line('f1c4', 1)] : [line('f1c4', 1), line('f3d4', 2)], complete: true, timeMs: 1 };
+        const legal = new Chess(fen).moves({ verbose: true });
+        return { fen, depth, multiPv, lines: legal[0] ? [line(`${legal[0].from}${legal[0].to}`, 1)] : [], complete: true, timeMs: 1 };
+      },
+    };
+    const deep = { ...settings, analysisDepth: 20 };
+    await startAnalysis(game, deep, engine);
+    expect((await getDb().analyses.get(game.id))?.reviews.find((r) => r.ply === 5)?.classification).toBe('blunder');
+
+    const d = await changeUserColor(game.id, 'w', deep, () => engine);
+    expect(d).toEqual({ hasUserColor: true, exercisesAdded: 1 });
+    const [ex] = await getDb().exercises.toArray();
+    expect(ex?.ply).toBe(5);
+    expect(ex?.tree?.depth).toBe(16); // the tree is capped below the analysis depth
+  });
+
   it('changing the color of an unknown game does nothing', async () => {
     expect(await changeUserColor('missing', 'w', settings)).toBeNull();
   });
