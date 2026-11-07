@@ -1,10 +1,10 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Chess } from 'chess.js';
 import { ChessQuestDB, getDb, setDb } from '../src/db/database';
 import { deleteGame, getGame, importPgn, setUserColor } from '../src/db/gamesRepo';
 import { DEFAULT_SETTINGS } from '../src/db/settings';
-import { changeUserColor, derivationMessage, startAnalysis } from '../src/services/analysis/analysisRunner';
+import { changeUserColor, derivationMessage, reconcileDerivations, startAnalysis } from '../src/services/analysis/analysisRunner';
 import type { EngineLike } from '../src/services/analysis/gameAnalyzer';
 import { positionsOf } from '../src/services/chess/position';
 import { materialBalance } from '../src/services/chess/material';
@@ -16,15 +16,16 @@ import { SHORT_BLUNDER_GAME } from './fixtures';
  * material ×100 everywhere, except that the position after 3.Nd4 is scored as
  * already losing the knight, so 3.Nd4 is a blunder with 3.Bc4 as the best move.
  */
-function scriptedEngine(game: Game): EngineLike {
+function scriptedEngine(game: Game, opts: { alsoBlunder2Nf3?: boolean } = {}): EngineLike {
   const fens = positionsOf(game.moves);
-  const afterBlunder = fens[5];
-  const beforeBlunder = fens[4];
+  // ply 5 = after 3.Nd4 (best 3.Bc4); optionally ply 3 = after 2.Nf3 (best 2.Bc4) as a second, smaller White blunder.
+  const bad = new Map([[fens[5], -300], ...(opts.alsoBlunder2Nf3 ? [[fens[3], -250] as const] : [])]);
+  const best = new Map([[fens[4], 'f1c4'], ...(opts.alsoBlunder2Nf3 ? [[fens[2], 'f1c4'] as const] : [])]);
   return {
     async analyze({ fen, depth = 12, multiPv = 1 }) {
-      const score = { kind: 'cp' as const, value: fen === afterBlunder ? -300 : materialBalance(fen, 'w') * 100 };
+      const score = { kind: 'cp' as const, value: bad.get(fen) ?? materialBalance(fen, 'w') * 100 };
       const legal = new Chess(fen).moves({ verbose: true });
-      const first = fen === beforeBlunder ? 'f1c4' : legal[0] ? `${legal[0].from}${legal[0].to}` : undefined;
+      const first = best.get(fen) ?? (legal[0] ? `${legal[0].from}${legal[0].to}` : undefined);
       return { fen, depth, multiPv, lines: [{ multipv: 1, score, pv: first ? [first] : [], depth }], complete: true, timeMs: 1 };
     },
   };
@@ -153,6 +154,176 @@ describe('user color and derived training data (Sprint 4.3)', () => {
     expect((await getGame(game.id))?.userColor).toBe('w');
     const events = await gameEvents(game.id);
     expect(events.every((e) => (e.ref.ply ?? 0) % 2 === 1)).toBe(true);
+  });
+
+  it('a second color change waits for the derivation in progress (audit P2-3)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    // The White derivation is held inside the engine until the test releases it.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let entered!: () => void;
+    const inEngine = new Promise<void>((r) => (entered = r));
+    const held: EngineLike = {
+      async analyze(req) {
+        entered();
+        await gate;
+        return scriptedEngine(game).analyze(req);
+      },
+    };
+    const finished: string[] = [];
+    const first = changeUserColor(game.id, 'w', settings, () => held).then(() => finished.push('w'));
+    await inEngine;
+    const second = changeUserColor(game.id, 'b', settings).then(() => finished.push('b'));
+    for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(finished).toEqual([]); // the Black derivation is queued behind the White one
+    release();
+    await Promise.all([first, second]);
+
+    expect(finished).toEqual(['w', 'b']);
+    expect((await getGame(game.id))?.userColor).toBe('b');
+    const events = await gameEvents(game.id);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => (e.ref.ply ?? 1) % 2 === 0)).toBe(true);
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
+  });
+
+  it('clearing the color removes only this game\'s game evidence (audit P2-2)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await changeUserColor(game.id, 'w', settings);
+    const [ex] = await getDb().exercises.toArray();
+    const base = { skill: 'tactics' as const, at: 1, outcome: 1, weight: 1, independent: true };
+    await getDb().skillEvents.bulkAdd([
+      { ...base, source: 'exercise', ref: { exerciseId: ex?.id ?? 'x', gameId: game.id, ply: 5 } },
+      { ...base, source: 'opening', ref: { gameId: game.id, lineId: 'l1' } },
+      { ...base, source: 'game', ref: { gameId: 'other-game', ply: 3 } },
+    ]);
+    const before = await getDb().skillEvents.count();
+    const own = (await gameEvents(game.id)).filter((e) => e.source === 'game').length;
+    expect(own).toBeGreaterThan(0);
+
+    await changeUserColor(game.id, undefined, settings);
+
+    const left = await getDb().skillEvents.toArray();
+    expect(left).toHaveLength(before - own);
+    expect(left.filter((e) => e.source === 'game' && e.ref.gameId === game.id)).toHaveLength(0);
+    expect(left.map((e) => e.source).sort()).toEqual(['exercise', 'game', 'opening']);
+    expect(left.find((e) => e.source === 'game')?.ref.gameId).toBe('other-game');
+    expect(await getDb().exercises.count()).toBe(1); // exercises are kept
+  });
+
+  it('marks the derivation pending before the work starts and done when it matches the color (audit P2-1)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
+    let seen: string | undefined;
+    const probe: EngineLike = {
+      async analyze(req) {
+        seen ??= (await getDb().analyses.get(game.id))?.derivation;
+        return scriptedEngine(game).analyze(req);
+      },
+    };
+    await changeUserColor(game.id, 'w', settings, () => probe);
+    expect(seen).toBe('pending'); // a tab closed now would leave this mark behind
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
+  });
+
+  it('a color change interrupted before its derivation finished is completed on the next start (audit P2-1)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    // State left by a tab closed right after the color was saved.
+    await setUserColor(game.id, 'w');
+    await getDb().analyses.update(game.id, { derivation: 'pending' });
+
+    expect(await reconcileDerivations(settings, () => scriptedEngine(game))).toBe(1);
+
+    expect(await getDb().exercises.count()).toBe(1);
+    const events = await gameEvents(game.id);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => (e.ref.ply ?? 0) % 2 === 1)).toBe(true);
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
+    expect(await reconcileDerivations(settings)).toBe(0); // nothing left to do
+  });
+
+  it('a partially derived game is completed without exceeding the per-game exercise limit (audit P2-1)', async () => {
+    const game = await importedGame();
+    const engine = scriptedEngine(game, { alsoBlunder2Nf3: true });
+    const one = { ...settings, maxExercisesPerGame: 1 };
+    await startAnalysis(game, one, engine);
+    const white = () => getDb().exercises.filter((e) => e.gameId === game.id && e.sideToMove === 'w').toArray();
+    await changeUserColor(game.id, 'w', one);
+    const [firstPick] = await white();
+    expect(firstPick).toBeDefined();
+    await changeUserColor(game.id, 'b', one);
+    await changeUserColor(game.id, 'w', one); // deriving White again must not pick a new position
+    await getDb().analyses.update(game.id, { derivation: 'pending' });
+    await reconcileDerivations(one);
+    expect((await white()).map((e) => e.id)).toEqual([firstPick?.id]);
+  });
+
+  it('startup reconciliation leaves finished and pre-4.3 analyses alone', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await setUserColor(game.id, 'w'); // e.g. training data cleared on purpose: not regenerated
+    expect(await reconcileDerivations(settings)).toBe(0);
+    const legacy = await getDb().analyses.get(game.id);
+    if (!legacy) throw new Error('analysis missing');
+    const { derivation: _drop, ...old } = legacy;
+    await getDb().analyses.put(old);
+    expect(await reconcileDerivations(settings)).toBe(0);
+    expect(await getDb().exercises.count()).toBe(0);
+  });
+
+  it('a game whose derivation fails does not block the reconciliation of the others', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await setUserColor(game.id, 'w');
+    await getDb().analyses.update(game.id, { derivation: 'pending' });
+    const analysis = await getDb().analyses.get(game.id);
+    if (!analysis) throw new Error('analysis missing');
+    // A corrupt pending analysis that sorts before the good one makes its derivation throw.
+    await getDb().games.put({ ...game, id: '0-broken', hash: 'broken', userColor: 'w' });
+    await getDb().analyses.put({ ...analysis, gameId: '0-broken', reviews: undefined as never, positions: undefined as never });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    expect(await reconcileDerivations(settings)).toBe(1);
+
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+    expect((await getDb().analyses.get(game.id))?.derivation).toBe('done');
+    expect((await getDb().analyses.get('0-broken'))?.derivation).toBe('pending'); // retried on the next start
+    expect(await getDb().exercises.where('gameId').equals(game.id).count()).toBe(1);
+  });
+
+  it('a game another run already finished is not derived again', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await setUserColor(game.id, 'w');
+    await getDb().analyses.update(game.id, { derivation: 'pending' });
+    let calls = 0;
+    const counting: EngineLike = {
+      async analyze(req) {
+        calls++;
+        return scriptedEngine(game).analyze(req);
+      },
+    };
+    // Two startups at once (StrictMode double effect, or two tabs).
+    const [a, b] = await Promise.all([reconcileDerivations(settings, () => counting), reconcileDerivations(settings, () => counting)]);
+    expect(a + b).toBe(1);
+    const once = calls;
+    await getDb().analyses.update(game.id, { derivation: 'pending' });
+    await getDb().exercises.clear();
+    calls = 0;
+    await reconcileDerivations(settings, () => counting);
+    expect(once).toBe(calls);
+  });
+
+  it('a running analysis is not reconciled (it derives when it completes)', async () => {
+    const game = await importedGame();
+    await startAnalysis(game, settings, scriptedEngine(game));
+    await getDb().analyses.update(game.id, { derivation: 'pending', status: 'running' });
+    expect(await reconcileDerivations(settings)).toBe(0);
   });
 
   it('a game deleted while its analysis runs gets no evidence or exercises (review L4)', async () => {

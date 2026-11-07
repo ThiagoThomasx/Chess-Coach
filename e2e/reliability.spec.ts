@@ -23,6 +23,23 @@ async function put(page: Page, store: string, rows: unknown[]): Promise<void> {
   );
 }
 
+async function clear(page: Page, store: string): Promise<void> {
+  await page.evaluate(async (store) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open('chessquest');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, store);
+}
+
 test('setting the color after the analysis creates the exercises without re-analysing', async ({ page }) => {
   // No player names configured: the imported game has no color.
   await page.goto('/#/games');
@@ -45,6 +62,19 @@ test('setting the color after the analysis creates the exercises without re-anal
   expect(exercises.every((e) => e.sideToMove === 'w')).toBe(true);
   const events = await readTable<{ source: string }>(page, 'skillEvents');
   expect(events.some((e) => e.source === 'game')).toBe(true);
+  expect((await readTable<{ derivation?: string }>(page, 'analyses'))[0]?.derivation).toBe('done');
+
+  // A tab closed mid-derivation leaves the color saved, the work undone and the mark pending:
+  // the next start finishes it (audit P2-1).
+  const [analysis] = await readTable<Record<string, unknown>>(page, 'analyses');
+  await clear(page, 'exercises');
+  await clear(page, 'skillEvents');
+  await put(page, 'analyses', [{ ...analysis, derivation: 'pending' }]);
+  await page.reload();
+  await expect.poll(async () => (await readTable(page, 'exercises')).length, { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect.poll(async () => (await readTable<{ derivation?: string }>(page, 'analyses'))[0]?.derivation, { timeout: 60_000 }).toBe('done');
+  expect((await readTable<{ sideToMove: string }>(page, 'exercises')).every((e) => e.sideToMove === 'w')).toBe(true);
+  expect((await readTable<{ source: string }>(page, 'skillEvents')).some((e) => e.source === 'game')).toBe(true);
 });
 
 test('a screen that cannot render shows a recoverable message instead of a blank page', async ({ page }) => {

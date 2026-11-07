@@ -1,7 +1,8 @@
 import type { Color, Exercise, Game, GameAnalysis, Settings } from '../../types/domain';
 import { getGame, setUserColor } from '../../db/gamesRepo';
-import { analyzeGame, replyLinesOf, type EngineLike } from './gameAnalyzer';
-import { dbEvalCache, getAnalysis, replaceGameSkillEvents, saveAnalysis } from '../../db/analysisRepo';
+import { analyzeGame, fenKey, replyLinesOf, type EngineLike } from './gameAnalyzer';
+import { dbEvalCache, getAnalysis, listAnalyses, replaceGameSkillEvents, saveAnalysis } from '../../db/analysisRepo';
+import { getDb } from '../../db/database';
 import { addExercise, listExercises } from '../../db/trainingRepo';
 import { buildExercise, selectExercisePositions, withSolutionTree } from '../exercises/generate';
 import { eventsFromGame } from '../adaptation/skills';
@@ -71,7 +72,8 @@ export function startAnalysis(game: Game, settings: Settings, engine: EngineLike
       },
       previous,
     );
-    await saveAnalysis(result);
+    // A complete analysis is saved already marked for derivation, so a tab closed before it finishes is reconciled.
+    await saveAnalysis(result.status === 'complete' ? { ...result, derivation: 'pending' } : result);
     // Derives with the stored color: it may have been set (or the game deleted) while the analysis ran.
     const derivation = result.status === 'complete' ? await deriveCurrent(game.id, result, settings, engine) : null;
     emit(result);
@@ -115,12 +117,16 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     return { hasUserColor: false, exercisesAdded: 0 };
   }
   await replaceGameSkillEvents(game.id, eventsFromGame(game.id, a.reviews, replies, game.userColor, a.updatedAt));
-  const existing = new Set((await listExercises()).map((e) => e.fen));
-  const picks = selectExercisePositions(game, a.reviews, a.positions, { max: settings.maxExercisesPerGame, thresholds: settings.thresholds, existingFens: existing });
+  // Only other games' exercises exclude a position: the picks of this game stay the same on every
+  // derivation, so a repeated or resumed one completes the set instead of choosing new positions.
+  const all = await listExercises();
+  const otherGames = new Set(all.filter((e) => e.gameId !== game.id).map((e) => e.fen));
+  const own = new Set(all.filter((e) => e.gameId === game.id).map((e) => fenKey(e.fen)));
+  const picks = selectExercisePositions(game, a.reviews, a.positions, { max: settings.maxExercisesPerGame, thresholds: settings.thresholds, existingFens: otherGames });
   let added = 0;
   for (const r of picks) {
     const before = a.positions[r.ply - 1];
-    if (!before) continue;
+    if (!before || own.has(fenKey(r.fenBefore))) continue;
     const ex = buildExercise({ game, review: r, before, replyLine: replies[r.ply] ?? [], tolerance: settings.exerciseTolerance });
     if (!ex) continue;
     const complete = await completeExercise(ex, settings, engine);
@@ -155,23 +161,79 @@ const MAX_DERIVE_PASSES = 3;
  * changed meanwhile, so the evidence always ends up matching the saved color.
  * Null when the game no longer exists (its evidence is removed).
  */
-async function deriveCurrent(gameId: string, a: GameAnalysis, settings: Settings, engine?: EngineLike): Promise<Derivation | null> {
-  return serialized(gameId, async () => {
-    let result: Derivation | null = null;
-    for (let pass = 0; pass < MAX_DERIVE_PASSES; pass++) {
-      const game = await getGame(gameId);
-      if (!game) break;
-      result = await deriveFromAnalysis(game, a, settings, engine);
-      const now = await getGame(gameId);
-      if (!now) break;
-      if (now.userColor === game.userColor) return result;
-    }
-    if (!(await getGame(gameId))) {
-      await replaceGameSkillEvents(gameId, []);
-      return null;
-    }
-    return result;
+function deriveCurrent(gameId: string, a: GameAnalysis, settings: Settings, engine?: EngineLike): Promise<Derivation | null> {
+  return serialized(gameId, () => deriveNow(gameId, a, settings, engine));
+}
+
+/** Body of `deriveCurrent`; runs inside the game's queue. */
+async function deriveNow(gameId: string, a: GameAnalysis, settings: Settings, engine?: EngineLike): Promise<Derivation | null> {
+  let result: Derivation | null = null;
+  for (let pass = 0; pass < MAX_DERIVE_PASSES; pass++) {
+    const game = await getGame(gameId);
+    if (!game) break;
+    result = await deriveFromAnalysis(game, a, settings, engine);
+    if ((await markDerived(gameId, game.userColor)) !== 'changed') break;
+  }
+  if (!(await getGame(gameId))) {
+    await replaceGameSkillEvents(gameId, []);
+    return null;
+  }
+  return result;
+}
+
+/**
+ * Marks the derivation done when the color it used is still the saved one
+ * (atomically with that check). 'changed' when the color moved meanwhile:
+ * the mark stays pending. 'gone' when the game no longer exists.
+ */
+async function markDerived(gameId: string, color: Color | undefined): Promise<'done' | 'changed' | 'gone'> {
+  const db = getDb();
+  return db.transaction('rw', db.games, db.analyses, async () => {
+    const now = await db.games.get(gameId);
+    if (!now) return 'gone';
+    if (now.userColor !== color) return 'changed';
+    await db.analyses.update(gameId, { derivation: 'done' });
+    return 'done';
   });
+}
+
+/** Saves the color and, for a complete analysis, marks its derivation pending in the same transaction. */
+async function saveColorMarkingPending(gameId: string, color: Color | undefined): Promise<GameAnalysis | null | false> {
+  const db = getDb();
+  return db.transaction('rw', db.games, db.analyses, async () => {
+    if (!(await setUserColor(gameId, color))) return false;
+    const analysis = await db.analyses.get(gameId);
+    if (analysis?.status !== 'complete') return null;
+    const pending: GameAnalysis = { ...analysis, derivation: 'pending' };
+    await db.analyses.put(pending);
+    return pending;
+  });
+}
+
+/**
+ * Finishes derivations a closed tab left pending (color saved, exercises or
+ * evidence not yet rebuilt). Analyses from before Sprint 4.3 (no mark) and
+ * finished ones are left alone, so training data cleared on purpose is not
+ * regenerated. Returns how many games were reconciled.
+ */
+export async function reconcileDerivations(settings: Settings, engine?: () => EngineLike | undefined): Promise<number> {
+  const isPending = (a: GameAnalysis | undefined): a is GameAnalysis => a?.status === 'complete' && a.derivation === 'pending' && !isRunning(a.gameId);
+  const pending = (await listAnalyses()).filter(isPending);
+  let reconciled = 0;
+  for (const { gameId } of pending) {
+    try {
+      const derived = await serialized(gameId, async () => {
+        // Re-read in the game's queue: another run (a repeated effect, a color change) may have finished it.
+        const a = await getAnalysis(gameId);
+        return isPending(a) && (await deriveNow(gameId, a, settings, engine?.())) !== null;
+      });
+      if (derived) reconciled++;
+    } catch (e) {
+      // One broken game must not block the others; it stays pending and is retried on the next start.
+      console.error('ChessQuest: falha ao gerar exercícios pendentes da partida', gameId, e);
+    }
+  }
+  return reconciled;
 }
 
 /**
@@ -181,9 +243,8 @@ async function deriveCurrent(gameId: string, a: GameAnalysis, settings: Settings
  * running analysis derives with the stored color when it completes).
  */
 export async function changeUserColor(gameId: string, color: Color | undefined, settings: Settings, engine?: () => EngineLike | undefined): Promise<Derivation | null> {
-  if (!(await setUserColor(gameId, color))) return null;
-  const analysis = await getAnalysis(gameId);
-  if (analysis?.status !== 'complete') return null;
+  const analysis = await saveColorMarkingPending(gameId, color);
+  if (!analysis) return null;
   return deriveCurrent(gameId, analysis, settings, engine?.());
 }
 

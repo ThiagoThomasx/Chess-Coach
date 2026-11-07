@@ -27,6 +27,8 @@ AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
              concluída ──▶ deriveFromAnalysis (também ao definir a cor: changeUserColor)
                                    ├─ eventsFromGame → db.skillEvents
                                    └─ selectExercisePositions → buildExercise → db.exercises
+             analysis.derivation: 'pending' (gravado junto com a conclusão ou com a cor) → 'done' (quando
+             exercícios e evidências batem com a cor salva); App, ao abrir: reconcileDerivations refaz os 'pending'
 ExerciseSolver ── validateStep / judgeWithEngine ──▶ recordAttempt (attempts + srs + skillEvents, 1 transação)
 Dashboard/Evolução ── useLiveQuery ──▶ estimateProfile, stats, nextTraining
 ```

@@ -2,7 +2,7 @@
 
 - **Branch:** `feat/sprint4-3-reliable-training-loop`, criada a partir de `main` em `4445f72` (CI pós-merge do PR #4: run `42342167980`, sucesso).
 - **Data:** 2026-11-07.
-- **Situação:** implementado e testado localmente. **Nada foi commitado, enviado ou aberto como PR**: isso aguarda a autorização do usuário.
+- **Situação:** PR #5 aberto (commit `1031e60`). As correções da auditoria (§6) estão implementadas e testadas localmente, **ainda não commitadas**.
 - **Origem:** auditoria de entrada da Sprint 4.3, com escopo aprovado pelo usuário.
 
 ## 1. Objetivo
@@ -129,7 +129,67 @@ Um agente revisor independente aprovou a mudança, sem achados críticos ou alto
 | "Voltar ao dashboard" não limpava o erro quando a tela que falhou é o próprio dashboard | Baixa | Corrigido |
 | O teste do "v2 antigo" monta o banco à mão | Residual | A lista de tabelas foi conferida contra `ef447c1` e `4445f72`, e é idêntica |
 
-## 6. Decisões pendentes e backlog
+## 6. Correções da auditoria do PR #5
+
+A auditoria independente do PR #5 (veredito "aprovado com ressalvas", sem P0/P1) apontou três P2. O usuário pediu que fossem corrigidos antes do merge.
+
+### 6.1 P2-1: troca de cor interrompida
+
+**Problema.** A cor era gravada antes da derivação, que leva segundos (o motor monta as árvores de solução). Se a aba fechasse no meio, a cor ficava salva com exercícios parciais e evidências desatualizadas, e nada refazia o trabalho.
+
+**Correção:**
+
+- `GameAnalysis.derivation` (`'pending' | 'done'`): campo novo, **não indexado**, sem mudança de esquema; vai no backup junto com a análise.
+- Fica `'pending'` **na mesma transação** que salva a cor (`saveColorMarkingPending`) ou que grava a análise concluída (`startAnalysis`).
+- Fica `'done'` só quando exercícios e evidências foram gerados para a cor ainda salva (`markDerived`, que confere a cor na mesma transação).
+- Ao abrir o app, depois de `recoverInterruptedAnalyses`, `reconcileDerivations` refaz as derivações `'pending'`. O motor só é iniciado se houver alguma.
+- Análises anteriores à Sprint 4.3 (sem o campo) e as `'done'` não são tocadas: dados de treino apagados de propósito em Configurações não são recriados.
+- **A derivação passou a poder ser repetida sem efeito colateral.** As posições escolhidas excluem só os exercícios de *outras* partidas, e os exercícios que a partida já tem são pulados antes de chamar o motor.
+  - Retomar uma derivação parcial completa o conjunto sem ultrapassar `maxExercisesPerGame`.
+  - Também deixou de acontecer, ao voltar para a cor anterior (brancas → pretas → brancas), a escolha de posições novas além do limite.
+- **Revisão de código** das correções: aprovada, sem achados críticos ou altos. Corrigi o achado médio e um baixo:
+  - uma partida cuja derivação falha não bloqueia mais as outras: ela continua `'pending'`, o erro vai para o console e ela é tentada de novo na próxima abertura;
+  - a marca é relida dentro da fila da partida, então duas reconciliações simultâneas (efeito repetido, outra aba) não refazem o trabalho do motor.
+
+  Ficaram registrados, sem mudança:
+  - a reconciliação roda só ao abrir o app (depois de restaurar um backup com marcas `'pending'`, vale na próxima abertura);
+  - um exercício montado sem árvore porque o motor falhou recebe `'done'` assim mesmo (comportamento anterior);
+  - trocar de cor ida e volta pode deixar exercícios dos dois lados acima do limite por partida (anterior; ligado à decisão pendente sobre os exercícios do lado antigo).
+
+### 6.2 P2-2 e P2-3: testes que não provavam o que diziam
+
+- **P2-2.** Novo teste: com eventos de exercício, de abertura e de outra partida no banco, remover a cor apaga só os eventos `source: 'game'` daquela partida.
+- **P2-3.** Novo teste com o motor retido num portão:
+  - enquanto a derivação das brancas está parada no motor, a troca para pretas fica na fila e não termina;
+  - ao liberar, as duas terminam na ordem `w`, `b`;
+  - o estado final é só das pretas e `derivation` fica `'done'`.
+
+### 6.3 Prova de que os testes detectam as falhas
+
+Cada correção foi desfeita temporariamente para confirmar que algum teste falha:
+
+| Mutação | Teste que falhou |
+|---|---|
+| Fila por partida removida | P2-3 (ordem `w`, `b`) |
+| Remoção sem filtrar `source: 'game'` | P2-2 |
+| Escolha excluindo também os exercícios da própria partida (comportamento antigo) | Derivação parcial sem ultrapassar o limite |
+| Troca de cor sem marcar `'pending'` | Marca `'pending'` durante a derivação |
+| Reconciliação ignorando a marca | Retomada na inicialização; análises `'done'` e antigas intocadas |
+| `App` sem chamar `reconcileDerivations` | E2E `reliability.spec.ts` (retomada após recarregar) |
+| Reconciliação sem `try/catch` por partida | Partida com falha não bloqueia as outras |
+| Reconciliação sem reler a marca na fila | Partida já concluída por outra execução não é refeita |
+
+### 6.4 Resultados
+
+| Verificação | Antes | Depois |
+|---|---|---|
+| typecheck | ok | ok |
+| Vitest | 339 | **348** (+9 em `user-color.test.ts`) |
+| Playwright | 49 | **49** (o E2E da cor ganhou a etapa de retomada após recarregar) |
+
+Os P3 da auditoria (mensagem de erro quando a derivação falha depois de a cor ser salva, boundary para falha de carregamento de tela, limite de passadas, toasts sem E2E) **não foram alterados**; continuam registrados para decisão.
+
+## 7. Decisões pendentes e backlog
 
 - **Decisão do usuário:** ao trocar a cor de uma partida, apagar os exercícios do lado antigo (e as tentativas deles)? Hoje eles são mantidos.
 - **Visto e não corrigido (fora do escopo):** o contador "Treinar" da barra lateral (`AppShell.tsx`) conta exercícios novos nunca tentados como "revisões pendentes", enquanto o dashboard conta só revisões vencidas (`isDueReview`).

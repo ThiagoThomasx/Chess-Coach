@@ -5,6 +5,9 @@ import { ToastProvider } from '../components/feedback/Toast';
 import { NotFound } from './NotFound';
 import { useSettings } from '../hooks/useSettings';
 import { recoverInterruptedAnalyses } from '../db/analysisRepo';
+import { loadSettings } from '../db/settings';
+import { reconcileDerivations } from '../services/analysis/analysisRunner';
+import { getEngine } from '../services/engine/engineService';
 
 const DashboardPage = lazy(() => import('../features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 const GamesPage = lazy(() => import('../features/games/GamesPage').then((m) => ({ default: m.GamesPage })));
@@ -22,7 +25,10 @@ export function App() {
     document.documentElement.dataset.theme = settings.appTheme;
   }, [settings.appTheme]);
   useEffect(() => {
-    recoverInterruptedAnalyses().catch(() => undefined);
+    // Then finishes exercise/evidence derivations a closed tab left pending (the engine starts only if one exists).
+    recoverInterruptedAnalyses()
+      .then(async () => reconcileDerivations(await loadSettings(), getEngine))
+      .catch((e: unknown) => console.error('ChessQuest: falha ao retomar dados pendentes', e));
   }, []);
   return (
     <ToastProvider>
