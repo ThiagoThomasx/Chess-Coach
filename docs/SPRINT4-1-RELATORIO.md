@@ -347,7 +347,7 @@ A árvore de trabalho estava limpa, exceto `.claude/`, que não é rastreado.
 
 | # | Passo | Esperado | É falha se |
 |---|---|---|---|
-| 1 | Abrir o app | O dashboard carrega e o menu inferior aparece sem cortes | Página em branco, erro, ou conteúdo cortado na lateral |
+| 1 | Abrir o app | O dashboard carrega e a barra de navegação no topo aparece sem cortes | Página em branco, erro, ou conteúdo cortado na lateral |
 | 2 | Treino → "Sessão guiada" → "Iniciar sessão" | A tela mostra a recomendação, as contagens por grupo e o botão com o tamanho da fila; depois aparece "Exercício 1 de N" | Botão sem resposta, fila vazia mesmo havendo exercícios, ou contagem diferente da fila |
 | 3 | Resolver um exercício | O lance é aceito por toque ou arraste, o feedback aparece e surge "Próximo exercício" | O tabuleiro não aceita o lance, não há feedback, ou aparece "Pular" depois de responder |
 | 4 | Tocar "Interromper" | Volta para Treino | Erro, ou a sessão continua na tela |
@@ -356,6 +356,6 @@ A árvore de trabalho estava limpa, exceto `.claude/`, que não é rastreado.
 | 7 | Tocar "Pular" num exercício ainda não respondido | Avança para o seguinte; o pulado não volta nesta sessão | O exercício pulado reaparece, ou conta como erro |
 | 8 | Tocar "Encerrar" | O resumo mostra os realizados, sem ajuda, com dicas, erros, revisões, pulados, competências e a próxima recomendação | Números diferentes do que foi feito, ou a recomendação ausente |
 | 9 | Recarregar a página na tela de resumo e voltar a "Sessão guiada" | Aparece a tela de **iniciar** uma sessão nova; a encerrada não volta como ativa. Com uma sessão só interrompida, recarregar retoma no exercício pendente | Sessão encerrada retomada como ativa, ou sessão interrompida perdida |
-| 10 | Layout em tela pequena, em todas as telas acima | Tabuleiro inteiro visível; botões de pelo menos ~1 cm, sem toques errados; nenhuma rolagem horizontal; barra da sessão sem sobreposição; menu inferior sem cobrir os botões | Algum botão difícil de tocar ou coberto, rolagem lateral, tabuleiro cortado ou texto sobreposto |
+| 10 | Layout em tela pequena, em todas as telas acima | Tabuleiro inteiro visível; botões de pelo menos ~1 cm, sem toques errados; nenhuma rolagem horizontal; barra da sessão sem sobreposição; barra de navegação do topo sem cobrir o conteúdo | Algum botão difícil de tocar ou coberto, rolagem lateral, tabuleiro cortado ou texto sobreposto |
 
 Registre o modelo do aparelho, o navegador e a largura da tela. Para cada falha, inclua uma captura de tela.
