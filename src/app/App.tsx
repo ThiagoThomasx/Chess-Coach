@@ -4,7 +4,7 @@ import { AppShell } from '../components/layout/AppShell';
 import { ToastProvider } from '../components/feedback/Toast';
 import { NotFound } from './NotFound';
 import { useSettings } from '../hooks/useSettings';
-import { recoverInterruptedAnalyses } from '../db/analysisRepo';
+import { recoverInterruptedAnalyses, redateGameEvidence } from '../db/analysisRepo';
 import { loadSettings } from '../db/settings';
 import { reconcileDerivations } from '../services/analysis/analysisRunner';
 import { getEngine } from '../services/engine/engineService';
@@ -25,8 +25,10 @@ export function App() {
     document.documentElement.dataset.theme = settings.appTheme;
   }, [settings.appTheme]);
   useEffect(() => {
-    // Then finishes exercise/evidence derivations a closed tab left pending (the engine starts only if one exists).
+    // Then dates game evidence by the game (evidence before Sprint 4.4 used the analysis time) and
+    // finishes exercise/evidence derivations a closed tab left pending (the engine starts only if one exists).
     recoverInterruptedAnalyses()
+      .then(() => redateGameEvidence())
       .then(async () => reconcileDerivations(await loadSettings(), getEngine))
       .catch((e: unknown) => console.error('ChessQuest: falha ao retomar dados pendentes', e));
   }, []);

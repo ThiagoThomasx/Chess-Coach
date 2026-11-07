@@ -6,7 +6,7 @@ import { ERROR_KIND_LABEL, explainMove } from '../../services/pedagogy/explain';
 import { FLAG_LABEL } from '../../services/analysis/classify';
 import { formatScore } from '../../services/analysis/evaluation';
 import { ClassBadge } from '../../components/feedback/ClassBadge';
-import { buildExercise, checkCandidate } from '../../services/exercises/generate';
+import { acceptsPlayedMove, buildExercise, checkCandidate } from '../../services/exercises/generate';
 import { addExercise } from '../../db/trainingRepo';
 import { useToast } from '../../components/feedback/Toast';
 import { completeExercise } from '../../services/analysis/analysisRunner';
@@ -61,6 +61,10 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
     setIsCreating(true);
     try {
       const full = await completeExercise(ex, settings, getEngine());
+      if (acceptsPlayedMove(full, review.uci)) {
+        toast('Numa verificação mais profunda, o lance jogado está entre os aceitos: não há erro a treinar nesta posição.', 'warn');
+        return;
+      }
       const r = await addExercise(full);
       setCreatedId(r.id);
       toast(r.added ? 'Exercício criado' : 'Já existe um exercício para esta posição', r.added ? 'good' : 'info');

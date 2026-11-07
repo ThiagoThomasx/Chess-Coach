@@ -4,8 +4,9 @@ import { analyzeGame, fenKey, replyLinesOf, type EngineLike } from './gameAnalyz
 import { dbEvalCache, getAnalysis, listAnalyses, replaceGameSkillEvents, saveAnalysis } from '../../db/analysisRepo';
 import { getDb } from '../../db/database';
 import { addExercise, listExercises } from '../../db/trainingRepo';
-import { buildExercise, selectExercisePositions, withSolutionTree } from '../exercises/generate';
+import { acceptsPlayedMove, buildExercise, selectExercisePositions, withSolutionTree } from '../exercises/generate';
 import { eventsFromGame } from '../adaptation/skills';
+import { gameEvidenceTime } from '../games/gameDate';
 
 export { replyLinesOf };
 
@@ -16,6 +17,8 @@ export interface Derivation {
   /** False when the game has no user color: no exercises or evidence can be attributed. */
   hasUserColor: boolean;
   exercisesAdded: number;
+  /** Never-attempted exercises of the old side removed by a side switch (only set when > 0). */
+  exercisesRemoved?: number;
 }
 
 export interface AnalysisOutcome {
@@ -116,7 +119,8 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     await replaceGameSkillEvents(game.id, []);
     return { hasUserColor: false, exercisesAdded: 0 };
   }
-  await replaceGameSkillEvents(game.id, eventsFromGame(game.id, a.reviews, replies, game.userColor, a.updatedAt));
+  // Dated when the game was played (not analysed): decay, trend and "needs review" follow the board.
+  await replaceGameSkillEvents(game.id, eventsFromGame(game.id, a.reviews, replies, game.userColor, gameEvidenceTime(game, a.updatedAt)));
   // Only other games' exercises exclude a position: the picks of this game stay the same on every
   // derivation, so a repeated or resumed one completes the set instead of choosing new positions.
   const all = await listExercises();
@@ -132,6 +136,8 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     const complete = await completeExercise(ex, settings, engine);
     // Building the tree takes time: stop if the color changed (or the game was deleted) meanwhile.
     if ((await getGame(game.id))?.userColor !== game.userColor) break;
+    // The deeper search of the tree accepts the move played: it was not an error (Sprint 4.4, O1).
+    if (acceptsPlayedMove(complete, r.uci)) continue;
     if ((await addExercise(complete)).added) added++;
   }
   return { hasUserColor: true, exercisesAdded: added };
@@ -197,17 +203,44 @@ async function markDerived(gameId: string, color: Color | undefined): Promise<'d
   });
 }
 
-/** Saves the color and, for a complete analysis, marks its derivation pending in the same transaction. */
-async function saveColorMarkingPending(gameId: string, color: Color | undefined): Promise<GameAnalysis | null | false> {
+interface SavedColor {
+  /** The complete analysis, now marked pending; null when there is none (nothing to derive). */
+  analysis: GameAnalysis | null;
+  /** Never-attempted exercises of the side the player no longer is, removed by a side switch. */
+  removed: number;
+}
+
+/**
+ * Saves the color and, for a complete analysis, marks its derivation pending,
+ * in one transaction. Switching sides (white ↔ black) on a complete analysis
+ * also removes this game's exercises of the old side that were never
+ * attempted (user decision D3, Sprint 4.4), manual ones included: attempted
+ * ones are kept with their history. False when the game does not exist.
+ */
+async function saveColorMarkingPending(gameId: string, color: Color | undefined): Promise<SavedColor | false> {
   const db = getDb();
-  return db.transaction('rw', db.games, db.analyses, async () => {
+  return db.transaction('rw', [db.games, db.analyses, db.exercises, db.attempts], async () => {
+    const previous = (await db.games.get(gameId))?.userColor;
     if (!(await setUserColor(gameId, color))) return false;
     const analysis = await db.analyses.get(gameId);
-    if (analysis?.status !== 'complete') return null;
+    // Nothing to derive (analysis running or missing): nothing is removed either, so the
+    // toast never hides a removal (review M2); the old side's exercises stay as before 4.4.
+    if (analysis?.status !== 'complete') return { analysis: null, removed: 0 };
+    const removed = previous && color && previous !== color ? await removeUnattemptedExercises(gameId, previous) : 0;
     const pending: GameAnalysis = { ...analysis, derivation: 'pending' };
     await db.analyses.put(pending);
-    return pending;
+    return { analysis: pending, removed };
   });
+}
+
+/** Deletes the game's exercises for `side` that have no attempt (so no evidence either). Runs inside the caller's transaction. */
+async function removeUnattemptedExercises(gameId: string, side: Color): Promise<number> {
+  const db = getDb();
+  const candidates = await db.exercises.filter((e) => e.gameId === gameId && e.sideToMove === side).toArray();
+  const unattempted: string[] = [];
+  for (const ex of candidates) if ((await db.attempts.where('exerciseId').equals(ex.id).count()) === 0) unattempted.push(ex.id);
+  await db.exercises.bulkDelete(unattempted);
+  return unattempted.length;
 }
 
 /**
@@ -243,15 +276,29 @@ export async function reconcileDerivations(settings: Settings, engine?: () => En
  * running analysis derives with the stored color when it completes).
  */
 export async function changeUserColor(gameId: string, color: Color | undefined, settings: Settings, engine?: () => EngineLike | undefined): Promise<Derivation | null> {
-  const analysis = await saveColorMarkingPending(gameId, color);
-  if (!analysis) return null;
-  return deriveCurrent(gameId, analysis, settings, engine?.());
+  const saved = await saveColorMarkingPending(gameId, color);
+  if (!saved || !saved.analysis) return null;
+  const derivation = await deriveCurrent(gameId, saved.analysis, settings, engine?.());
+  return derivation && saved.removed ? { ...derivation, exercisesRemoved: saved.removed } : derivation;
 }
 
 /** User-facing summary of what an analysis or a color change generated. */
 export function derivationMessage(d: Derivation | null, prefix = 'Análise concluída.'): string {
   if (!d) return prefix;
   if (!d.hasUserColor) return `${prefix} Defina sua cor na lista de partidas para gerar exercícios e atualizar seu perfil.`;
-  if (d.exercisesAdded === 0) return `${prefix} Perfil atualizado; nenhum exercício novo.`;
-  return `${prefix} Perfil atualizado e ${d.exercisesAdded} exercício(s) novo(s).`;
+  const removed = d.exercisesRemoved ? ` ${d.exercisesRemoved} exercício(s) nunca tentado(s) do outro lado foram removidos.` : '';
+  if (d.exercisesAdded === 0) return `${prefix} Perfil atualizado; nenhum exercício novo.${removed}`;
+  return `${prefix} Perfil atualizado e ${d.exercisesAdded} exercício(s) novo(s).${removed}`;
+}
+
+/**
+ * Toast after a color change that threw. The color may already be saved (the
+ * derivation runs after it and stays pending, retried on the next start):
+ * then the message must not say the color was not saved.
+ */
+export function colorChangeFailureMessage(saved: boolean, color: Color | undefined): string {
+  if (!saved) return 'Não foi possível salvar a cor. Tente de novo.';
+  return color
+    ? 'Cor salva. Os exercícios não puderam ser gerados agora; o app tentará de novo na próxima abertura.'
+    : 'Cor removida. O perfil não pôde ser atualizado agora; o app tentará de novo na próxima abertura.';
 }

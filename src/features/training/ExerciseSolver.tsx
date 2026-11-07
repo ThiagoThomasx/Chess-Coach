@@ -103,8 +103,14 @@ export function Solver({ ex, settings, session }: SolverProps) {
             <div className="row action-row">
               {s.status === 'playing' && (
                 <>
-                  <button className="btn" onClick={s.hint} disabled={s.hints >= MAX_HINTS} data-testid="hint">
-                    <Lightbulb size={15} /> {s.hints === 0 ? 'Pedir dica' : `Mais uma dica (${s.hints}/${MAX_HINTS})`}
+                  <button
+                    className="btn"
+                    onClick={s.hint}
+                    disabled={s.hints >= MAX_HINTS}
+                    data-testid="hint"
+                    title={s.hints === MAX_HINTS - 1 ? 'A última dica mostra o lance: a tentativa passa a contar como solução revelada.' : undefined}
+                  >
+                    <Lightbulb size={15} /> {s.hints === 0 ? 'Pedir dica' : s.hints === MAX_HINTS - 1 ? 'Mostrar o lance (conta como revelada)' : `Mais uma dica (${s.hints}/${MAX_HINTS})`}
                   </button>
                   <button className="btn btn-ghost" onClick={s.reveal} data-testid="reveal">
                     <Eye size={15} /> Ver solução

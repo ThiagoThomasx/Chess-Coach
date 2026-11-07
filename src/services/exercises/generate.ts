@@ -218,3 +218,13 @@ export async function withSolutionTree(ex: Exercise, engine: EngineLike, opts: T
     analysisDepth: tree.depth,
   };
 }
+
+/**
+ * The move played in the game is among the moves the solution tree accepts.
+ * The tree is searched deeper than a quick analysis: a move flagged as an
+ * error at low depth can turn out fine, and then there is no error to train
+ * (e.g. 15.Bxd7+ of the Opera game, a "blunder" at depth 11, accepted at 16).
+ */
+export function acceptsPlayedMove(ex: Pick<Exercise, 'tree'>, playedUci: string): boolean {
+  return ex.tree?.accepted.some((m) => m.uci === playedUci) ?? false;
+}

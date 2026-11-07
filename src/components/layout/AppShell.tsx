@@ -5,6 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { BarChart3, BookOpen, Crown, Gauge, Library, Settings2, Target } from 'lucide-react';
 import { useEngine } from '../../hooks/useEngine';
 import { getDb } from '../../db/database';
+import { isDueReview } from '../../services/scheduling/srs';
 
 const ENGINE_LABEL = {
   idle: 'Motor em espera',
@@ -17,7 +18,15 @@ const ENGINE_LABEL = {
 export function AppShell() {
   const { engine, state } = useEngine();
   const location = useLocation();
-  const due = useLiveQuery(() => getDb().exercises.where('srs.dueAt').belowOrEqual(Date.now()).count(), [], 0);
+  // Same rule as the dashboard: only exercises already attempted whose review is due (new ones are not reviews).
+  const due = useLiveQuery(
+    () => {
+      const now = Date.now();
+      return getDb().exercises.where('srs.dueAt').belowOrEqual(now).filter((e) => isDueReview(e.srs, now)).count();
+    },
+    [],
+    0,
+  );
   const links = [
     { to: '/', label: 'Dashboard', icon: <Gauge size={18} />, end: true },
     { to: '/games', label: 'Partidas', icon: <Library size={18} /> },

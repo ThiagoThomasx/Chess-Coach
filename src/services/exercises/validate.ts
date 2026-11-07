@@ -93,3 +93,14 @@ export function hintFor(ex: Exercise, level: number): { text: string; square?: s
 }
 
 export const MAX_HINTS = 3;
+
+/**
+ * How an attempt is recorded. The last hint names the move, so from then on
+ * the attempt is a revealed solution (no credit, back in 10 minutes), not an
+ * assisted success: otherwise "with help" would mix needing a nudge with
+ * being told the answer.
+ */
+export function attemptResult(correct: boolean, revealed: boolean, hintsShown: number): { correct: boolean; revealed: boolean } {
+  const moveGiven = hintsShown >= MAX_HINTS;
+  return { correct: correct && !revealed && !moveGiven, revealed: revealed || moveGiven };
+}

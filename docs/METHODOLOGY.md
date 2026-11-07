@@ -125,6 +125,10 @@ Os textos não atribuem causas psicológicas (desatenção, pressa etc.); um tes
 
 Critérios mínimos (`checkCandidate`): análise completa, profundidade ≥ mínimo, lance classificado como erro/erro grave (ou imprecisão com mate perdido/tática desperdiçada), ≥ 2 lances legais, e o lance errado **não** pode estar dentro da tolerância (senão a posição é descartada como ambígua). No máximo *N* por partida (padrão 4), priorizando a maior perda; posições repetidas são ignoradas.
 
+**Revalidação na profundidade da árvore** (Sprint 4.4): a árvore de solução é buscada com mais profundidade que a análise rápida. Se ela aceitar o lance jogado na partida, não havia erro a treinar e o exercício é descartado (na geração automática e na criação manual). Exemplo real: 15.Bxd7+ da Partida da Ópera é "erro grave" na profundidade 11 e é aceito na 16. Sem motor disponível a árvore não é montada e essa verificação não acontece.
+
+**Troca de lado** (decisão D3, Sprint 4.4): ao trocar a cor de uma partida entre brancas e pretas, os exercícios dela do lado antigo que **nunca foram tentados** são removidos na mesma transação que salva a cor; os já tentados ficam, com o histórico. Vale também para exercícios criados manualmente (não há campo que os distinga). Só acontece com a análise concluída, quando a mensagem informa quantos foram removidos. Remover a cor ou defini-la pela primeira vez não remove exercícios.
+
 ### 5.2 Tipos e objetivos (`goalFor`)
 
 | Tipo | Quando | Lances do usuário |
@@ -151,7 +155,7 @@ Construída com o motor ao criar o exercício: em cada posição do usuário, bu
 6. Aceito: se atingiu o limite de lances → resolvido. Senão, o adversário responde com uma das respostas da árvore (escolha aleatória entre as equivalentes, para variar o treino); se o lance era uma alternativa não expandida, o motor calcula a resposta e o próximo nó na hora. Sem motor nesse caso, o exercício termina como resolvido, com aviso de que a continuação não foi verificada.
 7. Limite rígido: 4 lances do usuário por exercício.
 
-O registro de tentativa distingue: resolvido sem ajuda, com dicas (cada dica conta; repetir depois de errar na mesma sessão conta como uma dica) e solução consultada.
+O registro de tentativa distingue: resolvido sem ajuda, com dicas (cada dica conta; repetir depois de errar na mesma sessão conta como uma dica) e solução consultada. **A dica 3 mostra o lance**: a partir dela, a tentativa conta como solução revelada (sem crédito, volta em 10 minutos), e o botão avisa antes (Sprint 4.4). Assim "com ajuda" significa ter precisado de uma pista, não ter recebido a resposta.
 
 Dicas progressivas: 1 = o tipo de lance (mate imediato, xeque, captura, ataque duplo ou lance tranquilo), calculado da posição — o tipo de peça só é citado quando o jogador tem mais de uma peça desse tipo (citar "a dama" ou "o rei" já apontaria a peça, que é a dica 2); 2 = a casa da peça a mover; 3 = o lance.
 
@@ -168,7 +172,7 @@ Exercícios criados antes desta versão (esquema v1, linha única) são converti
 Leitner simples (`services/scheduling/srs.ts`), intervalos padrão 1, 3, 7, 14, 30, 60 dias:
 
 - Erro ou solução revelada → caixa 0, volta em 10 minutos.
-- Acerto com dicas → mantém a caixa, metade do intervalo (mínimo 1 dia).
+- Acerto com 1 ou 2 dicas → mantém a caixa, metade do intervalo (mínimo 1 dia). Depois da dica 3 (o lance), conta como solução revelada.
 - Acerto independente → agenda pelo intervalo da caixa atual e sobe uma caixa.
 
 Treinos de linhas de abertura do repertório usam o mesmo agendador (erro → revisão em 10 minutos).
@@ -188,7 +192,7 @@ Competências: visão tática, cálculo, identificação de ameaças, defesa, es
 
 | Fonte | Peso | Resultado |
 |---|---|---|
-| Exercício | 1 (1/k na k-ésima tentativa do mesmo exercício) | 1 sem dica; 1 − 0,25·dicas (mín. 0,25) com dica; 0 se errou ou viu a solução. Exercícios com sequência ≥ 3 meias-jogadas também contam para "cálculo" (peso 0,5) |
+| Exercício | 1 (1/k na k-ésima tentativa do mesmo exercício) | 1 sem dica; 1 − 0,25·dicas com 1 ou 2 dicas; 0 se errou, viu a solução ou pediu a dica 3 (o lance). Exercícios com sequência ≥ 3 meias-jogadas também contam para "cálculo" (peso 0,5) |
 | Lance de partida (fase: abertura/meio-jogo/final) | 0,2 | 1 bom+, 0,5 imprecisão, 0 erro |
 | Erro de partida com conceito verificado | 0,5 | 0 na competência do conceito |
 | Oportunidade aproveitada (ganho ≥ 2 encontrado, mate encontrado, único lance que manteve uma posição não vencedora (< 60%) → defesa, peça ameaçada salva) | 0,5 | 1 |
@@ -200,7 +204,7 @@ Competências: visão tática, cálculo, identificação de ameaças, defesa, es
 
 **Peso efetivo** (`effectiveWeights`):
 
-- Decaimento por idade com meia-vida de 120 dias (o perfil acompanha o desempenho recente).
+- Decaimento por idade com meia-vida de 120 dias (o perfil acompanha o desempenho recente). A idade de uma evidência de partida é contada **da data em que a partida foi jogada** (data do PGN; sem data confiável, a data de importação), e não da análise (Sprint 4.4): analisar hoje uma partida de um ano atrás não torna os erros dela recentes, e reanalisar não muda a data. As evidências gravadas antes disso são redatadas ao abrir o app (só o campo `at` dos eventos de partida).
 - Tentativas repetidas do **mesmo exercício** valem 1/k (k = ordem da tentativa): resolver 15 vezes a mesma posição soma ≈ 3,3, não 15.
 - Uma partida contribui com no máximo peso 1 por competência (uma partida tem poucos exemplos de cada tema).
 - Evidência de partida só é registrada a partir de conceitos **verificados** (§4.3) e de ameaças "en prise" reais (lances legais + SEE).

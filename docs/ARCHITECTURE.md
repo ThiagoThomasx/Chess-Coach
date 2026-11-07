@@ -25,10 +25,13 @@ AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
                                    ├─ buildReviews → reviewMove → classifyMove
                                    └─ onProgress → db.analyses (a cada posição)
              concluída ──▶ deriveFromAnalysis (também ao definir a cor: changeUserColor)
-                                   ├─ eventsFromGame → db.skillEvents
-                                   └─ selectExercisePositions → buildExercise → db.exercises
+                                   ├─ eventsFromGame (datados pela partida: gameEvidenceTime) → db.skillEvents
+                                   └─ selectExercisePositions → buildExercise → withSolutionTree
+                                      → descartado se a árvore aceita o lance jogado → db.exercises
+             changeUserColor: troca de lado remove, na transação da cor, os exercícios nunca tentados do lado antigo
              analysis.derivation: 'pending' (gravado junto com a conclusão ou com a cor) → 'done' (quando
-             exercícios e evidências batem com a cor salva); App, ao abrir: reconcileDerivations refaz os 'pending'
+             exercícios e evidências batem com a cor salva); App, ao abrir: redateGameEvidence (idempotente) e depois
+             reconcileDerivations refaz os 'pending'
 ExerciseSolver ── validateStep / judgeWithEngine ──▶ recordAttempt (attempts + srs + skillEvents, 1 transação)
 Dashboard/Evolução ── useLiveQuery ──▶ estimateProfile, stats, nextTraining
 ```
