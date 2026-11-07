@@ -3,6 +3,7 @@ import { Chessboard } from 'react-chessboard';
 import { Chess, type Square } from 'chess.js';
 import { useSettings } from '../../hooks/useSettings';
 import type { Settings } from '../../types/domain';
+import type { PlacedMoveBadge } from '../../services/analysis/moveBadge';
 
 export interface BoardArrow {
   from: string;
@@ -18,6 +19,8 @@ interface ChessBoardProps {
   lastMove?: { from: string; to: string } | null;
   arrows?: BoardArrow[];
   highlights?: Record<string, CSSProperties>;
+  /** Move-quality badge drawn at the corner of the move's destination square. */
+  badge?: PlacedMoveBadge | null;
   id?: string;
 }
 
@@ -39,7 +42,7 @@ function toUci(fen: string, from: string, to: string): string | null {
   return `${from}${to}${promo?.promotion ?? ''}`;
 }
 
-export function ChessBoard({ fen, orientation, onMove, lastMove, arrows = [], highlights = {}, id = 'board' }: ChessBoardProps) {
+export function ChessBoard({ fen, orientation, onMove, lastMove, arrows = [], highlights = {}, badge = null, id = 'board' }: ChessBoardProps) {
   const settings = useSettings();
   const [selected, setSelected] = useState<string | null>(null);
   const theme = THEMES[settings.boardTheme];
@@ -88,6 +91,17 @@ export function ChessBoard({ fen, orientation, onMove, lastMove, arrows = [], hi
           darkSquareStyle: { backgroundColor: theme.dark },
           lightSquareStyle: { backgroundColor: theme.light },
           squareStyles,
+          // Same inner square as the library default, plus the badge overlay on one square.
+          squareRenderer: ({ square, children }) => (
+            <div style={{ width: '100%', height: '100%', position: 'relative', containerType: 'inline-size', ...squareStyles[square] }}>
+              {children}
+              {badge && badge.square === square && (
+                <span className={`move-badge cls-${badge.cls}`} data-testid="move-badge" data-class={badge.cls} role="img" aria-label={`Lance: ${badge.label}`} title={badge.label}>
+                  {badge.symbol}
+                </span>
+              )}
+            </div>
+          ),
           arrows: arrows.map((a) => ({ startSquare: a.from, endSquare: a.to, color: a.color ?? 'rgba(122,167,230,0.85)' })),
           allowDrawingArrows: true,
           canDragPiece: ({ piece }) => interactive && piece.pieceType[0] === sideToMove,

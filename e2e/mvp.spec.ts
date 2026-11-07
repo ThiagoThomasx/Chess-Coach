@@ -71,7 +71,7 @@ test('import → analyze → explain → exercise → solve → reload → profi
 
   // 12–13. Close/reopen: game, analysis and exercise history are still there.
   await page.reload();
-  await expect(page.getByText('✓ acerto')).toBeVisible();
+  await expect(page.getByTestId('last-attempt')).toContainText('✓ acerto');
   await page.goto('/#/games');
   await expect(page.getByTestId('game-row')).toContainText('Analisada');
   await page.getByTestId('game-row').click();

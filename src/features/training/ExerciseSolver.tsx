@@ -1,21 +1,22 @@
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Eye, Lightbulb, RotateCcw, SkipForward, Trash2 } from 'lucide-react';
+import { ArrowLeft, Eye, Lightbulb, RotateCcw, SkipForward } from 'lucide-react';
 import { getDb } from '../../db/database';
-import { deleteExercise } from '../../db/trainingRepo';
 import { useSettings } from '../../hooks/useSettings';
 import { ChessBoard } from '../../components/board/ChessBoard';
 import { THEME_LABEL } from '../../services/pedagogy/concepts';
 import { SKILL_LABEL } from '../../services/adaptation/skills';
-import { formatScore } from '../../services/analysis/evaluation';
-import { uciLineToSan } from '../../services/chess/position';
+import { sideToMove } from '../../services/chess/position';
+import { lastMoveBefore } from '../../services/exercises/context';
 import { MAX_HINTS } from '../../services/exercises/validate';
 import { Difficulty } from './Difficulty';
-import { useExerciseSession } from './useExerciseSession';
+import { TaskPrompt } from './TaskPrompt';
+import { BoardLegend, type LegendMove } from './BoardLegend';
+import { ReferenceSolution } from './ReferenceSolution';
+import { ExerciseDetails } from './ExerciseDetails';
+import { useExerciseSession, type SessionStatus } from './useExerciseSession';
 import type { Exercise, Settings } from '../../types/domain';
-
-const KIND_LABEL = { single: 'Lance único', sequence: 'Sequência forçada', mate: 'Mate', conversion: 'Conversão', defense: 'Defesa' } as const;
 
 export function ExerciseSolver() {
   const { exerciseId = '' } = useParams();
@@ -40,14 +41,28 @@ type SolverProps = {
   session?: { header: ReactNode; controls: ReactNode };
 };
 
+const ENDED: readonly SessionStatus[] = ['solved', 'failed', 'revealed', 'uncertain'];
+
 export function Solver({ ex, settings, session }: SolverProps) {
   const navigate = useNavigate();
   const s = useExerciseSession(ex, settings);
   const attempts = useLiveQuery(() => getDb().attempts.where('exerciseId').equals(ex.id).sortBy('at'), [ex.id], []);
   const nextDue = useLiveQuery(async () => (await getDb().exercises.where('srs.dueAt').belowOrEqual(Date.now()).toArray()).filter((e) => e.id !== ex.id).sort((a, b) => a.srs.dueAt - b.srs.dueAt)[0]?.id, [ex.id, s.nextDue]);
+  const game = useLiveQuery(() => (ex.gameId ? getDb().games.get(ex.gameId) : undefined), [ex.gameId]);
   const orientation = ex.sideToMove === 'w' ? 'white' : 'black';
-  const done = s.status === 'solved' || s.status === 'failed' || s.status === 'revealed' || s.status === 'uncertain';
+  const done = ENDED.includes(s.status);
   const highlights = s.hintSquare ? { [s.hintSquare]: { boxShadow: 'inset 0 0 0 4px rgba(217,178,106,0.95)' } } : {};
+
+  // Before the first move, the highlight shows the opponent move that led here (only when the game confirms it).
+  const previous = s.lastMove === null && s.fen === ex.fen ? lastMoveBefore(game, ex.ply, ex.fen) : null;
+  const shownMove = s.lastMove ?? (previous ? { from: previous.from, to: previous.to } : null);
+  const mover = sideToMove(s.fen) === 'w' ? 'b' : 'w';
+  const moverRole: LegendMove['by'] = mover !== ex.sideToMove ? 'opponent' : s.status === 'revealed' ? 'solution' : 'you';
+  const legendMove: LegendMove | null = previous ? { from: previous.from, to: previous.to, by: 'opponent', san: previous.san } : s.lastMove ? { ...s.lastMove, by: moverRole } : null;
+
+  const needsSolution = s.status === 'failed' || s.status === 'uncertain';
+  const showNextPending = !session && !!nextDue && done;
+  const retryClass = session || showNextPending || needsSolution ? 'btn btn-ghost' : 'btn btn-primary';
 
   return (
     <div className="page">
@@ -64,7 +79,6 @@ export function Solver({ ex, settings, session }: SolverProps) {
           <h1 style={{ marginTop: '0.3rem' }} data-testid="exercise-title">
             {done || attempts.length > 0 ? THEME_LABEL[ex.theme] : 'Exercício'}
           </h1>
-          <p>{ex.objective}</p>
         </div>
         <div className="row">
           <span className="tag">{SKILL_LABEL[ex.skill]}</span>
@@ -72,39 +86,44 @@ export function Solver({ ex, settings, session }: SolverProps) {
         </div>
       </header>
       <div className="solver">
-        <div className="stack">
-          <ChessBoard fen={s.fen} orientation={orientation} onMove={s.onMove} lastMove={s.lastMove} highlights={highlights} id="exercise-board" />
-          <div className="xs faint">{ex.sideToMove === 'w' ? 'Brancas' : 'Pretas'} jogam. Arraste a peça ou clique na origem e no destino.</div>
+        <div className="solver-prompt">
+          <TaskPrompt status={s.status} side={ex.sideToMove} objective={ex.objective} progress={s.progress} hints={s.hints} maxHints={MAX_HINTS} />
         </div>
-        <div className="stack">
-          <section className="panel" aria-live="polite">
-            <div className="panel-head">
-              <h2>{s.status === 'checking' ? 'Verificando…' : 'Sua vez'}</h2>
-              <span className="xs faint" data-testid="sequence-progress">
-                {KIND_LABEL[s.progress.kind]} · lance {Math.min(s.progress.done + 1, s.progress.total)} de {s.progress.total} · dicas {s.hints}/{MAX_HINTS}
-              </span>
-            </div>
-            {s.feedback ? (
+        <div className="solver-board stack" style={{ gap: '0.5rem' }}>
+          <ChessBoard fen={s.fen} orientation={orientation} onMove={s.onMove} lastMove={shownMove} highlights={highlights} badge={s.badge} id="exercise-board" />
+          <BoardLegend move={legendMove} badge={s.badge} side={ex.sideToMove} />
+        </div>
+        <div className="solver-side stack">
+          <section className="panel action-panel" aria-label="Ações do exercício">
+            {s.feedback && (
               <p className={`callout callout-${s.feedback.kind} fade-in`} data-testid="exercise-feedback">
                 {s.feedback.text}
               </p>
-            ) : (
-              <p className="small muted">Encontre o melhor lance. Você pode pedir dicas progressivas; elas são registradas separadamente do acerto independente.</p>
             )}
-            {ex.ambiguous && <p className="xs faint" style={{ marginTop: '0.6rem' }}>Esta posição admite mais de uma solução dentro da tolerância de {ex.tolerance} p.p.; todas são aceitas, e lances fora da lista são verificados pelo motor.</p>}
-            <div className="row" style={{ marginTop: '0.9rem' }}>
-              <button className="btn" onClick={s.hint} disabled={s.status !== 'playing' || s.hints >= MAX_HINTS} data-testid="hint">
-                <Lightbulb size={15} /> Dica
-              </button>
-              <button className="btn" onClick={s.reveal} disabled={s.status === 'solved' || s.status === 'revealed' || s.status === 'checking'} data-testid="reveal">
-                <Eye size={15} /> Ver solução
-              </button>
-              <button className="btn" onClick={s.retry} disabled={!done}>
-                <RotateCcw size={15} /> Resolver de novo
-              </button>
-              {!session && nextDue && (
-                <button className="btn btn-ghost" onClick={() => navigate(`/train/${nextDue}`)}>
+            <div className="row action-row">
+              {s.status === 'playing' && (
+                <>
+                  <button className="btn" onClick={s.hint} disabled={s.hints >= MAX_HINTS} data-testid="hint">
+                    <Lightbulb size={15} /> {s.hints === 0 ? 'Pedir dica' : `Mais uma dica (${s.hints}/${MAX_HINTS})`}
+                  </button>
+                  <button className="btn btn-ghost" onClick={s.reveal} data-testid="reveal">
+                    <Eye size={15} /> Ver solução
+                  </button>
+                </>
+              )}
+              {needsSolution && (
+                <button className={session ? 'btn' : 'btn btn-primary'} onClick={s.reveal} data-testid="reveal">
+                  <Eye size={15} /> Ver solução
+                </button>
+              )}
+              {showNextPending && (
+                <button className={needsSolution ? 'btn' : 'btn btn-primary'} onClick={() => navigate(`/train/${nextDue}`)} data-testid="next-pending">
                   <SkipForward size={15} /> Próximo pendente
+                </button>
+              )}
+              {done && (
+                <button className={retryClass} onClick={s.retry} data-testid="retry">
+                  <RotateCcw size={15} /> Resolver de novo
                 </button>
               )}
             </div>
@@ -120,56 +139,8 @@ export function Solver({ ex, settings, session }: SolverProps) {
               </p>
             )}
           </section>
-          {done && (
-            <section className="panel fade-in">
-              <h2>Solução de referência</h2>
-              <div className="stack" style={{ gap: '0.4rem', marginTop: '0.6rem' }}>
-                {ex.referenceLines.slice(0, 3).map((l) => (
-                  <div key={l.multipv} className="engine-line" style={{ cursor: 'default' }}>
-                    <span className="score mono">{formatScore(l.score)}</span>
-                    <span className="line-chip">{uciLineToSan(ex.fen, l.pv.slice(0, 8)).join(' ')}</span>
-                  </div>
-                ))}
-              </div>
-              <p className="xs faint" style={{ marginTop: '0.6rem' }}>
-                Lances aceitos: {ex.acceptableMoves.map((m) => m.san).join(', ')} · análise com profundidade {ex.analysisDepth}
-              </p>
-            </section>
-          )}
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Origem e histórico</h2>
-              {!session && (
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => {
-                    if (confirm('Excluir este exercício e seu histórico?')) void deleteExercise(ex.id).then(() => navigate('/train'));
-                  }}
-                >
-                  <Trash2 size={14} /> Excluir
-                </button>
-              )}
-            </div>
-            {ex.gameId ? (
-              <Link to={`/analysis/${ex.gameId}`} className="small touch-link">
-                Partida de origem · meia-jogada {ex.ply}
-              </Link>
-            ) : (
-              <span className="small muted">Exercício de abertura</span>
-            )}
-            <ul className="history" style={{ marginTop: '0.6rem' }}>
-              {attempts.length === 0 && <li className="small muted">Nenhuma tentativa registrada.</li>}
-              {attempts.map((a) => (
-                <li key={a.id} className="small row">
-                  {a.correct && !a.revealed ? <span className="tag tag-good">✓ acerto</span> : <span className="tag tag-bad">✗ {a.revealed ? 'solução vista' : 'erro'}</span>}
-                  <span className="muted">{a.hintsUsed ? `${a.hintsUsed} dica(s)` : 'sem dica'}</span>
-                  <span className="faint xs mono">
-                    {Math.round(a.timeMs / 1000)}s · {new Date(a.at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
+          {done && <ReferenceSolution ex={ex} />}
+          <ExerciseDetails ex={ex} attempts={attempts} canDelete={!session} />
         </div>
       </div>
     </div>

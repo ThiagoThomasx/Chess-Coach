@@ -90,6 +90,39 @@
   color: var(--inconclusive);
 }
 
+/* Move-quality badge on the destination square (Sprint 4.2). Symbol + label, never color alone. */
+.move-badge {
+  position: absolute;
+  top: 3%;
+  right: 3%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 38cqw;
+  min-width: 16px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  font: 700 clamp(9px, 17cqw, 15px) / 1 var(--font-ui);
+  letter-spacing: -0.04em;
+  color: #fff;
+  background: var(--inconclusive);
+  box-shadow: 0 0 0 2px rgb(16 17 20 / 0.55), 0 2px 6px rgb(0 0 0 / 0.45);
+  pointer-events: none;
+  animation: badge-pop var(--dur) var(--ease);
+}
+
+.move-badge.cls-best { background: var(--best); }
+.move-badge.cls-excellent,
+.move-badge.cls-good { background: var(--good); }
+.move-badge.cls-inaccuracy { background: var(--warn); color: #1a160d; }
+.move-badge.cls-mistake { background: var(--mistake); }
+.move-badge.cls-blunder { background: var(--bad); }
+
+@keyframes badge-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 /* ---------- Toasts ---------- */
 .toasts {
   position: fixed;

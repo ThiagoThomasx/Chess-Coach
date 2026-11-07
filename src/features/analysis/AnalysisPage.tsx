@@ -14,7 +14,9 @@ import { AnalysisControls } from './AnalysisControls';
 import { ExplanationPanel } from './ExplanationPanel';
 import { EnginePanel } from './EnginePanel';
 import { GameSummaryPanel } from './GameSummaryPanel';
+import { CurrentMoveStrip } from './CurrentMoveStrip';
 import { displayed, navReducer } from './navigation';
+import { badgeForReview } from '../../services/analysis/moveBadge';
 import type { Game, MoveReview } from '../../types/domain';
 
 export function AnalysisPage() {
@@ -86,6 +88,10 @@ function AnalysisView({ game }: { game: Game }) {
   const top = orientation === 'white' ? { name: game.headers.black, elo: game.headers.blackElo } : { name: game.headers.white, elo: game.headers.whiteElo };
   const bottom = orientation === 'white' ? { name: game.headers.white, elo: game.headers.whiteElo } : { name: game.headers.black, elo: game.headers.blackElo };
   const firstMoveNumber = Number(game.startFen.split(' ')[5] ?? '1');
+  const shownPly = nav.ply > 0 ? plies[nav.ply - 1] : undefined;
+  const blackOffset = sideToMove(game.startFen) === 'b' ? 1 : 0;
+  const moveLabel = shownPly && `${firstMoveNumber + Math.floor((nav.ply - 1 + blackOffset) / 2)}${shownPly.color === 'w' ? '.' : '…'} ${shownPly.san}`;
+  const betterSan = arrows.length > 0 ? review?.bestMoveSan : undefined;
 
   return (
     <div className="page">
@@ -110,12 +116,13 @@ function AnalysisView({ game }: { game: Game }) {
           </div>
           <div className="board-wrap">
             <EvalBar score={evalScore} orientation={orientation} isPending={!!analysis && analysis.status !== 'complete'} />
-            <ChessBoard fen={view.fen} orientation={orientation} lastMove={view.lastMove} arrows={arrows} onMove={(uci) => (dispatch({ type: 'play', uci }), true)} id="analysis-board" />
+            <ChessBoard fen={view.fen} orientation={orientation} lastMove={view.lastMove} arrows={arrows} badge={badgeForReview(review)} onMove={(uci) => (dispatch({ type: 'play', uci }), true)} id="analysis-board" />
           </div>
           <div className="player-strip">
             <span className="name">{bottom.name}</span>
             {bottom.elo && <span className="xs faint">Elo PGN {bottom.elo}</span>}
           </div>
+          <CurrentMoveStrip label={moveLabel} review={review} isInVariation={!!nav.variation} betterSan={betterSan} />
           {nav.variation && (
             <div className="variation-bar fade-in" data-testid="variation-bar">
               <strong className="xs">Variante</strong>
@@ -167,11 +174,6 @@ function AnalysisView({ game }: { game: Game }) {
         </div>
         <div className="analysis-side">
           <AnalysisControls game={game} analysis={analysis} settings={settings} />
-          {analysis && analysis.positions.some(Boolean) && (
-            <section className="panel">
-              <EvalGraph positions={analysis.positions} currentPly={nav.ply} onSelect={(ply) => dispatch({ type: 'goto', ply })} />
-            </section>
-          )}
           <section className="panel">
             <div className="panel-head">
               <h2>Lances</h2>
@@ -190,6 +192,11 @@ function AnalysisView({ game }: { game: Game }) {
             />
           </section>
           <ExplanationPanel key={nav.ply} game={game} review={review} before={before} after={after} settings={settings} />
+          {analysis && analysis.positions.some(Boolean) && (
+            <section className="panel">
+              <EvalGraph positions={analysis.positions} currentPly={nav.ply} onSelect={(ply) => dispatch({ type: 'goto', ply })} />
+            </section>
+          )}
           <EnginePanel
             alternatives={nav.variation ? null : before}
             alternativesBasePly={Math.max(0, nav.ply - 1)}

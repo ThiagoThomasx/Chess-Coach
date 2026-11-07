@@ -90,7 +90,7 @@ test('a two-move exercise continues after the first correct move and is solved o
   await playMove(page, 'exercise-board', 'b2b8');
   await expect(page.getByTestId('exercise-feedback')).toContainText('xeque-mate');
   await expect(page.getByTestId('next-review')).toContainText('Próxima revisão');
-  await expect(page.getByText('✓ acerto')).toBeVisible();
+  await expect(page.getByTestId('last-attempt')).toContainText('✓ acerto');
   await expect(page.getByTestId('exercise-title')).toHaveText('Mate disponível');
 });
 

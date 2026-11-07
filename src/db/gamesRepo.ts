@@ -40,6 +40,15 @@ export async function importPgn(text: string, fileName: string, playerNames: rea
   return { record, imported };
 }
 
+/** Name recorded in the import report for PGN pasted as text. */
+export const PASTE_SOURCE_NAME = 'Texto colado';
+
+/** Imports PGN pasted as text through the same validation, dedup and size limit as a file. */
+export async function importPastedPgn(text: string, playerNames: readonly string[]): Promise<ImportSummary> {
+  if (text.trim().length === 0) throw new Error('O texto colado está vazio.');
+  return importPgn(text, PASTE_SOURCE_NAME, playerNames);
+}
+
 export async function listGames(): Promise<Game[]> {
   return getDb().games.orderBy('importedAt').reverse().toArray();
 }

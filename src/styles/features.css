@@ -247,8 +247,186 @@
 .solver {
   display: grid;
   grid-template-columns: minmax(300px, min(calc(100vh - 220px), 600px)) minmax(300px, 1fr);
-  gap: 1.25rem;
+  grid-template-areas:
+    'board prompt'
+    'board side';
+  grid-template-rows: auto 1fr;
+  gap: 1rem 1.25rem;
   align-items: start;
+}
+
+.solver-prompt {
+  grid-area: prompt;
+}
+
+.solver-board {
+  grid-area: board;
+}
+
+.solver-side {
+  grid-area: side;
+}
+
+/* The one thing to read first: whose turn, the goal, the next step. */
+.task-prompt {
+  --tone: var(--accent);
+  position: relative;
+  padding: 1rem 1.15rem 0.9rem 1.3rem;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, color-mix(in oklab, var(--tone) 13%, var(--surface)) 0%, var(--surface) 70%);
+  border: 1px solid color-mix(in oklab, var(--tone) 45%, var(--border));
+  box-shadow: var(--shadow);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.task-prompt::before {
+  content: '';
+  position: absolute;
+  inset: 0.8rem auto 0.8rem 0;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--tone);
+}
+
+.task-prompt[data-status='checking'] {
+  --tone: var(--info);
+}
+
+.task-prompt[data-status='solved'] {
+  --tone: var(--good);
+}
+
+.task-prompt[data-status='failed'] {
+  --tone: var(--bad);
+}
+
+.task-prompt[data-status='revealed'],
+.task-prompt[data-status='uncertain'] {
+  --tone: var(--warn);
+}
+
+.task-prompt-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.task-prompt h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.turn-dot {
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--tone), 0 0 0 4px color-mix(in oklab, var(--tone) 25%, transparent);
+}
+
+.turn-dot-w {
+  background: #f4f1ea;
+}
+
+.turn-dot-b {
+  background: #17181b;
+}
+
+.task-goal {
+  margin-top: 0.5rem;
+  font-size: var(--text-lg);
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.task-next {
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+}
+
+.task-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed color-mix(in oklab, var(--tone) 30%, var(--border));
+  color: var(--text-faint);
+}
+
+.action-panel .callout + .action-row {
+  margin-top: 0.85rem;
+}
+
+.action-row:empty {
+  display: none;
+}
+
+.board-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 3px;
+}
+
+.swatch-last {
+  background: rgba(217, 178, 106, 0.75);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+/* Secondary information, collapsed by default. */
+.details-panel {
+  padding-block: 0.4rem;
+}
+
+.details-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.details-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.details-title {
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.details-panel > summary > .xs {
+  margin-left: auto;
+}
+
+.details-chevron {
+  color: var(--text-faint);
+  transition: transform var(--dur) var(--ease);
+}
+
+.details-panel[open] .details-chevron {
+  transform: rotate(180deg);
+}
+
+.details-panel > summary:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .difficulty {
@@ -270,7 +448,27 @@
 @media (max-width: 1000px) {
   .solver {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'prompt'
+      'board'
+      'side';
+    grid-template-rows: auto;
   }
+}
+
+@media (max-width: 480px) {
+  .task-prompt {
+    padding: 0.75rem 0.9rem 0.7rem 1.05rem;
+  }
+
+  .task-prompt h2 {
+    font-size: var(--text-lg);
+  }
+
+  .task-goal {
+    font-size: var(--text-base);
+  }
+
 }
 
 /* ---------- Openings ---------- */
@@ -458,4 +656,89 @@
 .page-head > div:has(> .session-bar) {
   flex: 1 1 100%;
   min-width: 0;
+}
+
+/* ---------- PGN paste (Sprint 4.2) ---------- */
+/* File and paste are two ways in: stacked in a narrow panel, side by side in a wide one. */
+.import-panel {
+  container-type: inline-size;
+}
+
+.import-sources {
+  display: grid;
+  gap: 0.9rem;
+}
+
+@container (min-width: 620px) {
+  .import-sources {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+    align-items: stretch;
+  }
+}
+
+.paste-box {
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+}
+
+.paste-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.paste-area {
+  width: 100%;
+  min-height: 5.5rem;
+  resize: vertical;
+  padding: 0.65rem 0.75rem;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.paste-area:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.paste-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.paste-error {
+  color: var(--bad);
+}
+
+/* ---------- Analysis: what the board shows now (Sprint 4.2) ---------- */
+.move-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.7rem;
+  min-height: 44px;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.move-strip-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-muted);
+}
+
+.swatch-better {
+  background: rgba(116, 183, 127, 0.9);
 }

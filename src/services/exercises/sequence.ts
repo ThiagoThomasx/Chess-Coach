@@ -201,14 +201,22 @@ export interface SolveState {
   fen: string;
 }
 
+/** White-POV scores of the reference move and of the user's move, from one comparison (feeds the move badge). */
+export interface MoveAssessment {
+  reference: Score;
+  played: Score;
+  depth: number;
+}
+
 export type MoveVerdict =
   | { kind: 'illegal'; message: string }
-  | { kind: 'rejected'; message: string; winLoss?: number }
+  | { kind: 'rejected'; message: string; winLoss?: number; assessment?: MoveAssessment }
   | { kind: 'unverifiable'; message: string }
   /** Too close to the tolerance to call: nothing is recorded. */
   | { kind: 'uncertain'; message: string; winLoss: number }
-  | { kind: 'solved'; message: string; fen: string }
-  | { kind: 'continue'; message: string; reply: { uci: string; san: string }; state: SolveState };
+  /** `reply`: the opponent move already applied in `fen`, when the line ended with one. */
+  | { kind: 'solved'; message: string; fen: string; assessment?: MoveAssessment; reply?: { uci: string; san: string } }
+  | { kind: 'continue'; message: string; reply: { uci: string; san: string }; state: SolveState; assessment?: MoveAssessment };
 
 export interface SolveDeps {
   engine?: EngineLike;
@@ -222,15 +230,15 @@ export interface SolveDeps {
 
 const randomPick = (n: number) => Math.floor(Math.random() * n);
 
-/** Win% of the best move in the current position: stored, or searched when the node has none. */
-async function referenceWin(state: SolveState, solver: Color, deps: SolveDeps): Promise<number | null> {
+/** Score of the best move in the current position: stored, or searched when the node has none. */
+async function referenceScore(state: SolveState, deps: SolveDeps): Promise<Score | null> {
   const stored = state.node.accepted[0];
-  if (stored) return winPercentFor(stored.score, solver);
+  if (stored) return stored.score;
   if (!deps.engine) return null;
   try {
     const r = await deps.engine.analyze({ fen: state.fen, depth: deps.depth, multiPv: 1 });
     const line = r.lines[0];
-    return line && r.complete ? winPercentFor(line.score, solver) : null;
+    return line && r.complete ? line.score : null;
   } catch {
     return null;
   }
@@ -240,6 +248,8 @@ async function referenceWin(state: SolveState, solver: Color, deps: SolveDeps): 
 interface Measured {
   loss: number;
   score: Score;
+  /** Score of the reference move in the same comparison. */
+  reference: Score;
   /** Solver moves to mate counting the user's move, or null when not mating. */
   mateMoves: number | null;
 }
@@ -259,33 +269,37 @@ async function measureSameSearch(state: SolveState, uci: string, solver: Color, 
   const theirs = r.lines.find((l) => l.pv[0] === ref);
   if (!mine || !theirs) return null;
   const bestWin = winPercentFor(theirs.score, solver);
-  return { loss: Math.max(0, bestWin - winPercentFor(mine.score, solver)), score: mine.score, mateMoves: mateFor(mine.score, solver) };
+  return { loss: Math.max(0, bestWin - winPercentFor(mine.score, solver)), score: mine.score, reference: theirs.score, mateMoves: mateFor(mine.score, solver) };
 }
 
 /** Fallback measurement: search the position after the move and compare with the stored reference. */
-async function measureAfter(after: string, bestWin: number, solver: Color, deps: SolveDeps & { engine: EngineLike }): Promise<Measured | null> {
+async function measureAfter(after: string, reference: Score, solver: Color, deps: SolveDeps & { engine: EngineLike }): Promise<Measured | null> {
+  const bestWin = winPercentFor(reference, solver);
   const r = await deps.engine.analyze({ fen: after, depth: deps.depth, multiPv: 1 });
   const line = r.lines[0];
   if (!line || !r.complete) return null;
   const m = mateFor(line.score, solver);
-  return { loss: Math.max(0, bestWin - winPercentFor(line.score, solver)), score: line.score, mateMoves: m === null ? null : m + 1 };
+  return { loss: Math.max(0, bestWin - winPercentFor(line.score, solver)), score: line.score, reference, mateMoves: m === null ? null : m + 1 };
 }
 
 /** Win% for the solver after its move, from the stored node or a fresh search. */
-async function judge(state: SolveState, uci: string, after: string, solver: Color, deps: SolveDeps): Promise<{ ok: true; score: Score } | { ok: false; verdict: MoveVerdict }> {
+async function judge(state: SolveState, uci: string, after: string, solver: Color, deps: SolveDeps): Promise<{ ok: true; score: Score; assessment: MoveAssessment } | { ok: false; verdict: MoveVerdict }> {
   const known = state.node.accepted.find((m) => m.uci === uci);
-  if (known) return { ok: true, score: known.score };
+  const best = state.node.accepted[0];
+  if (known && best) return { ok: true, score: known.score, assessment: { reference: best.score, played: known.score, depth: state.node.depth } };
   const san = uciToSan(state.fen, uci) ?? uci;
   const term = terminalScore(after);
-  const bestWin = await referenceWin(state, solver, deps);
-  if (term && bestWin !== null) {
+  const reference = await referenceScore(state, deps);
+  const bestWin = reference === null ? null : winPercentFor(reference, solver);
+  if (term && reference !== null && bestWin !== null) {
     const loss = bestWin - winPercentFor(term, solver);
-    return loss <= deps.tolerance ? { ok: true, score: term } : { ok: false, verdict: { kind: 'rejected', message: `${san} termina a partida sem atingir o objetivo.`, winLoss: loss } };
+    const assessment = { reference, played: term, depth: deps.depth };
+    return loss <= deps.tolerance ? { ok: true, score: term, assessment } : { ok: false, verdict: { kind: 'rejected', message: `${san} termina a partida sem atingir o objetivo.`, winLoss: loss, assessment } };
   }
   if (!deps.engine) return { ok: false, verdict: { kind: 'unverifiable', message: `${san} não está entre os lances calculados e o motor não está disponível para verificá-lo.` } };
-  if (bestWin === null) return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível calcular a referência desta posição para verificar ${san}; tente novamente.` } };
+  if (reference === null) return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível calcular a referência desta posição para verificar ${san}; tente novamente.` } };
   const engineDeps = { ...deps, engine: deps.engine };
-  const measure = async (depth: number): Promise<Measured | null> => (await measureSameSearch(state, uci, solver, engineDeps, depth)) ?? (await measureAfter(after, bestWin, solver, engineDeps));
+  const measure = async (depth: number): Promise<Measured | null> => (await measureSameSearch(state, uci, solver, engineDeps, depth)) ?? (await measureAfter(after, reference, solver, engineDeps));
   let m: Measured | null;
   try {
     m = await measure(deps.depth);
@@ -295,10 +309,11 @@ async function judge(state: SolveState, uci: string, after: string, solver: Colo
     return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível verificar ${san} com o motor agora.` } };
   }
   if (!m) return { ok: false, verdict: { kind: 'unverifiable', message: `A verificação de ${san} não terminou; tente novamente.` } };
+  const assessment: MoveAssessment = { reference: m.reference, played: m.score, depth: deps.depth };
   if (deps.mateMovesLeft !== undefined && (m.mateMoves ?? Infinity) > deps.mateMovesLeft) {
-    return { ok: false, verdict: { kind: 'rejected', message: `${san} não mantém o mate forçado dentro do limite do exercício.` } };
+    return { ok: false, verdict: { kind: 'rejected', message: `${san} não mantém o mate forçado dentro do limite do exercício.`, assessment } };
   }
-  if (m.loss <= deps.tolerance) return { ok: true, score: m.score };
+  if (m.loss <= deps.tolerance) return { ok: true, score: m.score, assessment };
   if (m.loss <= deps.tolerance + UNCERTAIN_MARGIN) {
     return {
       ok: false,
@@ -309,7 +324,7 @@ async function judge(state: SolveState, uci: string, after: string, solver: Colo
       },
     };
   }
-  return { ok: false, verdict: { kind: 'rejected', message: `${san} não resolve: a expectativa cai ${m.loss.toFixed(1)} p.p. em relação ao melhor lance (tolerância ${deps.tolerance}).`, winLoss: m.loss } };
+  return { ok: false, verdict: { kind: 'rejected', message: `${san} não resolve: a expectativa cai ${m.loss.toFixed(1)} p.p. em relação ao melhor lance (tolerância ${deps.tolerance}).`, winLoss: m.loss, assessment } };
 }
 
 /**
@@ -322,44 +337,48 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
   const san = uciToSan(state.fen, uci);
   const after = applyUci(state.fen, uci);
   if (!san || !after) return { kind: 'illegal', message: 'Lance ilegal.' };
-  if (terminalState(after) === 'checkmate') return { kind: 'solved', message: `${san} — xeque-mate!`, fen: after };
+  if (terminalState(after) === 'checkmate') {
+    const mated = terminalScore(after) as Score;
+    return { kind: 'solved', message: `${san} — xeque-mate!`, fen: after, assessment: { reference: mated, played: mated, depth: deps.depth } };
+  }
 
   const limit = Math.min(ex.goal.maxUserMoves, MAX_SEQUENCE_MOVES);
   const isMate = ex.goal.kind === 'mate';
   const judgeDeps = isMate ? { ...deps, mateMovesLeft: mateBudget(ex.goal, state.userMoves) } : deps;
   const verdict = await judge(state, uci, after, solver, judgeDeps);
   if (!verdict.ok) return verdict.verdict;
+  const { assessment } = verdict;
   const userMoves = state.userMoves + 1;
   const isMain = state.node.accepted[0]?.uci === uci;
   const altNote = isMain ? '' : ' (alternativa equivalente aceita)';
   if (userMoves >= limit) {
     const done = isMate ? `${san}${altNote}: o mate continua forçado dentro do limite do exercício.` : `${san}${altNote} — correto!`;
-    return { kind: 'solved', message: done, fen: after };
+    return { kind: 'solved', assessment, message: done, fen: after };
   }
 
   // Opponent reply: from the tree when this move was expanded, otherwise from the engine.
   const branches = state.node.replies[uci];
   const choose = deps.choose ?? randomPick;
-  if (branches && branches.length === 0) return { kind: 'solved', message: `${san}${altNote} — correto!`, fen: after };
+  if (branches && branches.length === 0) return { kind: 'solved', assessment, message: `${san}${altNote} — correto!`, fen: after };
   if (branches && branches.length > 0) {
     const b = branches[Math.min(branches.length - 1, choose(branches.length))] as ReplyBranch;
     const afterReply = applyUci(after, b.uci) as string;
-    if (!b.next) return { kind: 'solved', message: `${san}${altNote} — correto! O adversário responde ${b.san} e a sequência termina.`, fen: afterReply };
-    return { kind: 'continue', message: `${san}${altNote} — correto. O adversário responde ${b.san}.`, reply: { uci: b.uci, san: b.san }, state: { node: b.next, userMoves, fen: afterReply } };
+    if (!b.next) return { kind: 'solved', assessment, message: `${san}${altNote} — correto! O adversário responde ${b.san} e a sequência termina.`, fen: afterReply, reply: { uci: b.uci, san: b.san } };
+    return { kind: 'continue', assessment, message: `${san}${altNote} — correto. O adversário responde ${b.san}.`, reply: { uci: b.uci, san: b.san }, state: { node: b.next, userMoves, fen: afterReply } };
   }
-  if (!deps.engine) return { kind: 'solved', message: `${san}${altNote} — aceito. A continuação desta alternativa não pode ser verificada sem o motor.`, fen: after };
+  if (!deps.engine) return { kind: 'solved', assessment, message: `${san}${altNote} — aceito. A continuação desta alternativa não pode ser verificada sem o motor.`, fen: after };
   try {
     const opp = await deps.engine.analyze({ fen: after, depth: deps.depth, multiPv: MAX_REPLY_BRANCHES });
     const replies = defenseRepliesFrom(opp, deps.tolerance);
     const pick = replies[Math.min(replies.length - 1, choose(replies.length))];
-    if (!pick) return { kind: 'solved', message: `${san}${altNote} — correto!`, fen: after };
+    if (!pick) return { kind: 'solved', assessment, message: `${san}${altNote} — correto!`, fen: after };
     const afterReply = applyUci(after, pick.uci) as string;
-    if (terminalScore(afterReply)) return { kind: 'solved', message: `${san}${altNote} — correto!`, fen: afterReply };
+    if (terminalScore(afterReply)) return { kind: 'solved', assessment, message: `${san}${altNote} — correto!`, fen: afterReply, reply: { uci: pick.uci, san: pick.san } };
     const next = await deps.engine.analyze({ fen: afterReply, depth: deps.depth, multiPv: 3 });
     const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, isMate ? mateBudget(ex.goal, userMoves) : undefined), replies: {}, depth: next.depth };
-    return { kind: 'continue', message: `${san}${altNote} — correto. O adversário responde ${pick.san}.`, reply: { uci: pick.uci, san: pick.san }, state: { node, userMoves, fen: afterReply } };
+    return { kind: 'continue', assessment, message: `${san}${altNote} — correto. O adversário responde ${pick.san}.`, reply: { uci: pick.uci, san: pick.san }, state: { node, userMoves, fen: afterReply } };
   } catch {
-    return { kind: 'solved', message: `${san}${altNote} — aceito. Não foi possível calcular a resposta do adversário agora.`, fen: after };
+    return { kind: 'solved', assessment, message: `${san}${altNote} — aceito. Não foi possível calcular a resposta do adversário agora.`, fen: after };
   }
 }
 
