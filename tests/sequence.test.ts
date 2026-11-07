@@ -258,3 +258,64 @@ describe('judging moves outside the tree (Sprint 3)', () => {
     expect(v.kind).toBe('rejected');
   });
 });
+
+describe('verdicts carry the measured scores for the move badge (Sprint 4.2)', () => {
+  const single: ExerciseGoal = { kind: 'single', maxUserMoves: 1, targetWin: 60 };
+  const node: SolutionNode = { fen: ROOKS, accepted: [{ uci: 'a1a7', san: 'Ra7', score: cp(60) }], replies: {}, depth: 16 };
+  const state: SolveState = { node, userMoves: 0, fen: ROOKS };
+  const engineWith = (scores: Record<string, number>): EngineLike => ({
+    analyze: async (req) => {
+      const moves = req.searchMoves ?? Object.keys(scores);
+      const lines = moves.map((u) => ({ multipv: 0, depth: req.depth ?? 12, score: cp(scores[u] ?? 0), pv: [u] })).sort((a, b) => b.score.value - a.score.value).map((l, i) => ({ ...l, multipv: i + 1 }));
+      return { fen: req.fen, depth: req.depth ?? 12, multiPv: lines.length, timeMs: 0, complete: true, lines } as never;
+    },
+  });
+
+  it('a move from the stored tree is assessed against the node best, at the node depth', async () => {
+    const ex = exercise();
+    const v = await playSolverMove(ex, start(ex), 'b2b7', deps(0));
+    expect(v.kind === 'continue' && v.assessment).toEqual({ reference: mate(2), played: mate(2), depth: 99 });
+  });
+
+  it('an engine-verified move is assessed with the scores of the same search', async () => {
+    const v = await playSolverMove(exercise({ goal: single, kind: 'single' }), state, 'g1h1', { engine: engineWith({ a1a7: 20, g1h1: 15 }), depth: 12, tolerance: 5 });
+    expect(v.kind === 'solved' && v.assessment).toEqual({ reference: cp(20), played: cp(15), depth: 12 });
+  });
+
+  it('a rejected move carries its scores too', async () => {
+    const v = await playSolverMove(exercise({ goal: single, kind: 'single' }), state, 'g1h1', { engine: engineWith({ a1a7: 300, g1h1: 0 }), depth: 12, tolerance: 5 });
+    expect(v.kind === 'rejected' && v.assessment).toEqual({ reference: cp(300), played: cp(0), depth: 12 });
+  });
+
+  it('checkmate is assessed as the best move', async () => {
+    const fen = '7k/8/6K1/8/8/8/8/5Q2 w - - 0 1';
+    const ex = exercise({ fen, tree: leaf(fen), goal: { kind: 'mate', maxUserMoves: 1, targetWin: 100, mateIn: 1 } });
+    const v = await playSolverMove(ex, start(ex), 'f1f8', deps(0));
+    if (v.kind !== 'solved' || !v.assessment) throw new Error('expected an assessed solved verdict');
+    expect(v.assessment.played).toEqual(v.assessment.reference);
+    expect(v.assessment.played.kind).toBe('mate');
+  });
+});
+
+describe('a solved verdict that ends with an opponent reply names the reply (Sprint 4.2 review)', () => {
+  it('returns the reply so the board can highlight it', async () => {
+    const after = applyUci(ROOKS, 'a1a7') as string;
+    const node: SolutionNode = {
+      fen: ROOKS,
+      accepted: [{ uci: 'a1a7', san: 'Ra7', score: mate(2) }],
+      replies: { a1a7: [{ uci: 'g8f8', san: 'Kf8', score: mate(1), next: null }] },
+      depth: 99,
+    };
+    const ex = exercise({ tree: node, goal: { kind: 'sequence', maxUserMoves: 2, targetWin: 100 }, kind: 'sequence' });
+    const v = await playSolverMove(ex, start(ex), 'a1a7', deps(0));
+    if (v.kind !== 'solved') throw new Error('expected solved');
+    expect(v.reply).toEqual({ uci: 'g8f8', san: 'Kf8' });
+    expect(v.fen).toBe(applyUci(after, 'g8f8'));
+  });
+
+  it('has no reply when the user move itself ends the exercise', async () => {
+    const ex = exercise({ goal: { kind: 'single', maxUserMoves: 1, targetWin: 100 } });
+    const v = await playSolverMove(ex, start(ex), 'a1a7', deps(0));
+    expect(v.kind === 'solved' && v.reply).toBeFalsy();
+  });
+});

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Exercise, Settings } from '../../types/domain';
-import { applyUci } from '../../services/chess/position';
+import { applyUci, uciToSan } from '../../services/chess/position';
 import { hintForNode, MAX_HINTS } from '../../services/exercises/validate';
 import { mainLine, normalizeExercise, playSolverMove, type SolveState } from '../../services/exercises/sequence';
 import { recordAttempt } from '../../db/trainingRepo';
 import { getEngine } from '../../services/engine/engineService';
+import { badgeForClass, solverMoveClass, type PlacedMoveBadge } from '../../services/analysis/moveBadge';
+import type { MoveVerdict } from '../../services/exercises/sequence';
 
 /** 'uncertain': the engine could not judge the move with confidence; nothing is recorded. */
 export type SessionStatus = 'playing' | 'checking' | 'solved' | 'failed' | 'revealed' | 'uncertain';
@@ -31,19 +33,32 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
   const [hints, setHints] = useState(0);
   const [hintSquare, setHintSquare] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [lastMove, setLastMove] = useState<{ from: string; to: string } | null>(null);
+  const [lastMove, setLastMove] = useState<{ from: string; to: string; san?: string } | null>(null);
   const [moves, setMoves] = useState<string[]>([]);
   const [nextDue, setNextDue] = useState<number | null>(null);
   const [retries, setRetries] = useState(0);
   const [practice, setPractice] = useState(false);
+  const [badge, setBadge] = useState<PlacedMoveBadge | null>(null);
   const startedAt = useRef(Date.now());
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
-  const show = (pos: string, uci: string) => {
+  /** Shows the position after `uci` was played from `from`, highlighting that move. */
+  const show = (from: string, pos: string, uci: string) => {
+    const san = uciToSan(from, uci) ?? undefined;
     setFen(pos);
-    setLastMove({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
+    setLastMove({ from: uci.slice(0, 2), to: uci.slice(2, 4), ...(san ? { san } : {}) });
+  };
+
+  /** Grades the user's move with the analysis rules, from the scores the verdict measured. */
+  const gradeMove = (v: MoveVerdict, uci: string) => {
+    const assessment = 'assessment' in v ? v.assessment : undefined;
+    if (!assessment) return setBadge(null);
+    const accepted = v.kind === 'solved' || v.kind === 'continue';
+    const cls = solverMoveClass({ accepted, color: ex.sideToMove, ...assessment }, settings.thresholds);
+    const b = cls ? badgeForClass(cls) : null;
+    setBadge(b ? { ...b, square: uci.slice(2, 4) } : null);
   };
 
   const finish = async (correct: boolean, revealed: boolean, played: string[]) => {
@@ -62,13 +77,15 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     const after = applyUci(solve.fen, uci);
     if (!after) return false;
     const before = solve.fen;
-    show(after, uci);
+    show(before, after, uci);
     setStatus('checking');
     const played = [...moves, uci];
     setMoves(played);
     const inTree = solve.node.accepted.some((m) => m.uci === uci);
+    setBadge(null);
     if (!inTree) setFeedback({ kind: 'info', text: 'Verificando o lance com o motor…' });
     void playSolverMove(ex, solve, uci, { engine: getEngine(), depth: Math.min(ex.analysisDepth, settings.analysisDepth), tolerance: ex.tolerance }).then((v) => {
+      gradeMove(v, uci);
       switch (v.kind) {
         case 'illegal':
         case 'unverifiable':
@@ -88,7 +105,13 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
           void finish(false, false, played);
           return;
         case 'solved':
-          setFen(v.fen);
+          if (v.reply) {
+            // The line ended with the opponent's reply: highlight it, like a 'continue'.
+            show(after, v.fen, v.reply.uci);
+            if (v.reply.uci.slice(2, 4) === uci.slice(2, 4)) setBadge(null);
+          } else {
+            setFen(v.fen);
+          }
           setStatus('solved');
           setFeedback({ kind: 'good', text: v.message });
           void finish(true, false, played);
@@ -98,7 +121,9 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
           setHintSquare(null);
           timers.current.push(
             setTimeout(() => {
-              show(v.state.fen, v.reply.uci);
+              show(after, v.state.fen, v.reply.uci);
+              // The reply may capture on the graded square: the badge would then mark the wrong piece.
+              if (v.reply.uci.slice(2, 4) === uci.slice(2, 4)) setBadge(null);
               setSolve(v.state);
               setMoves([...played, v.reply.uci]);
               setStatus('playing');
@@ -123,6 +148,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     const wasPlaying = status === 'playing';
     const line = mainLine(ex.tree);
     setStatus('revealed');
+    setBadge(null);
     setFeedback({ kind: 'warn', text: `Solução: ${ex.tree.accepted.map((m) => m.san).join(' ou ')}. Demonstrando a sequência calculada…` });
     let cur = ex.fen;
     setFen(cur);
@@ -132,8 +158,8 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
         setTimeout(() => {
           const next = applyUci(cur, uci);
           if (!next) return;
+          show(cur, next, uci);
           cur = next;
-          show(next, uci);
         }, DEMO_STEP_MS * (i + 1)),
       );
     });
@@ -153,6 +179,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     setMoves([]);
     setNextDue(null);
     setPractice(false);
+    setBadge(null);
     startedAt.current = Date.now();
   };
 
@@ -163,6 +190,7 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     hintSquare,
     feedback,
     lastMove,
+    badge,
     nextDue,
     practice,
     onMove,

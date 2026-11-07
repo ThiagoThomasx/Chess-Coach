@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Bookmark, Crown, FileUp, ListChecks } from 'lucide-react';
+import { ArrowRight, Bookmark, ChevronDown, Crown, FileUp, ListChecks } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { useSettings } from '../../hooks/useSettings';
 import { EmptyState } from '../../components/feedback/EmptyState';
@@ -176,47 +176,54 @@ export function DashboardPage() {
 
       <SkillStates profile={profile} />
 
-      <div className="grid-3">
-        <section className="panel">
-          <h2>Temas com melhor desempenho</h2>
-          <div className="bar-list" style={{ marginTop: '0.75rem' }}>
-            {bestThemes.length === 0 && <p className="small muted">É preciso ao menos 3 tentativas em um tema.</p>}
-            {bestThemes.map((t) => (
-              <div key={t.theme} className="item">
-                <span>{THEME_LABEL[t.theme]}</span>
-                <span className="mono muted">{Math.round(t.independentRate * 100)}%</span>
-                <div className="bar">
-                  <span style={{ width: `${t.independentRate * 100}%`, background: 'var(--good)' }} />
+      <details className="panel details-panel dash-more" data-testid="dash-more">
+        <summary>
+          <span className="details-title">Mais detalhes</span>
+          <span className="xs faint">temas fortes, aberturas estudadas{pendingBookmarks.length > 0 ? ` · ${pendingBookmarks.length} posição(ões) marcada(s)` : ''}</span>
+          <ChevronDown size={16} className="details-chevron" aria-hidden="true" />
+        </summary>
+        <div className="grid-3" style={{ marginTop: '0.8rem' }}>
+          <section className="panel">
+            <h2>Temas com melhor desempenho</h2>
+            <div className="bar-list" style={{ marginTop: '0.75rem' }}>
+              {bestThemes.length === 0 && <p className="small muted">É preciso ao menos 3 tentativas em um tema.</p>}
+              {bestThemes.map((t) => (
+                <div key={t.theme} className="item">
+                  <span>{THEME_LABEL[t.theme]}</span>
+                  <span className="mono muted">{Math.round(t.independentRate * 100)}%</span>
+                  <div className="bar">
+                    <span style={{ width: `${t.independentRate * 100}%`, background: 'var(--good)' }} />
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="panel">
-          <h2>Aberturas mais estudadas</h2>
-          <div className="bar-list" style={{ marginTop: '0.75rem' }}>
-            {studied.length === 0 && <p className="small muted">Nenhum treino de abertura ainda.</p>}
-            {studied.map((o) => (
-              <div key={o.openingId} className="item">
-                <span>{findOpening(o.openingId, custom)?.name ?? o.openingId}</span>
-                <span className="mono muted">{o.attempts}×</span>
-              </div>
-            ))}
-          </div>
-        </section>
-        <section className="panel">
-          <h2>Posições marcadas</h2>
-          <div className="stack" style={{ marginTop: '0.75rem', gap: '0.4rem' }}>
-            {pendingBookmarks.length === 0 && <p className="small muted">Marque posições na análise para revisá-las depois.</p>}
-            {pendingBookmarks.map((b) => (
-              <Link key={b.id} to={`/analysis/${b.gameId}?ply=${b.ply}`} className="small row">
-                <Bookmark size={13} /> Meia-jogada {b.ply}
-                <span className="faint xs">{new Date(b.createdAt).toLocaleDateString('pt-BR')}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      </div>
+              ))}
+            </div>
+          </section>
+          <section className="panel">
+            <h2>Aberturas mais estudadas</h2>
+            <div className="bar-list" style={{ marginTop: '0.75rem' }}>
+              {studied.length === 0 && <p className="small muted">Nenhum treino de abertura ainda.</p>}
+              {studied.map((o) => (
+                <div key={o.openingId} className="item">
+                  <span>{findOpening(o.openingId, custom)?.name ?? o.openingId}</span>
+                  <span className="mono muted">{o.attempts}×</span>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="panel">
+            <h2>Posições marcadas</h2>
+            <div className="stack" style={{ marginTop: '0.75rem', gap: '0.4rem' }}>
+              {pendingBookmarks.length === 0 && <p className="small muted">Marque posições na análise para revisá-las depois.</p>}
+              {pendingBookmarks.map((b) => (
+                <Link key={b.id} to={`/analysis/${b.gameId}?ply=${b.ply}`} className="small row">
+                  <Bookmark size={13} /> Meia-jogada {b.ply}
+                  <span className="faint xs">{new Date(b.createdAt).toLocaleDateString('pt-BR')}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        </div>
+      </details>
     </div>
   );
 }
