@@ -245,3 +245,19 @@ test.describe('phone (360×800, touch)', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)).toBe(false);
   });
 });
+
+test('dashboard "Mais detalhes" counts every pending marked position, not just the 5 listed', async ({ page }) => {
+  await page.goto('/#/games');
+  await page.getByTestId('pgn-paste').fill(BLUNDER_PGN);
+  await page.getByTestId('pgn-paste-submit').click();
+  await expect(page.getByTestId('game-row')).toHaveCount(1);
+  const [game] = await readTable<{ id: string }>(page, 'games');
+  const marks = Array.from({ length: 7 }, (_, i) => ({ id: `bm-${i}`, gameId: game!.id, ply: i + 1, fen: '', note: '', createdAt: Date.now() - i }));
+  await put(page, 'bookmarks', marks);
+  await page.goto('/#/');
+  const more = page.getByTestId('dash-more');
+  await expect(more.locator('summary')).toContainText('7 posição(ões) marcada(s)');
+  // Collapsed, not removed: opening it shows the list (capped at 5 entries, as before).
+  await more.locator('summary').click();
+  await expect(more.getByText(/Meia-jogada \d/)).toHaveCount(5);
+});

@@ -125,3 +125,72 @@ Também foram conferidas capturas em 1440 px e 360 px: exercício no início, re
 - Teste em celular físico (da Sprint 4.1, roteiro em `docs/SPRINT4-1-RELATORIO.md` §11) continua pendente. Ele agora também deveria conferir o selo e o cartão de tarefa.
 - Fora do escopo, visto nos testes: uma análise gravada com FEN vazia (dado inválido, que o analisador real nunca grava) deixa a página de análise em branco, porque o app não tem um *error boundary*. Vale uma tarefa à parte.
 - Commit, push e PR aguardam autorização. Sugestão: PR com base `feat/sprint4-1-adaptive-training`, ou com base `fix/sprint3-phase1` depois que o PR #2 entrar.
+
+## 8. Auditoria do PR #3 (rodada 4.2.1)
+
+- **PR #3:** aberto, `feat/sprint4-2-clarity-badges-pgn-paste` → `feat/sprint4-1-adaptive-training`, sem conflitos e sem comentários ou revisões.
+- **PRs #1 e #2:** abertos, sem conflitos. A base do PR #3 não foi alterada.
+- **CI em `cf419be`:** o workflow roda em todo `pull_request`, e o check `verify` passou. Ele rodou typecheck, Vitest 322 (inclui os 21 com Stockfish real), build e Playwright 46.
+
+### 8.1 Achado e correção
+
+| Achado | Gravidade | Correção |
+|---|---|---|
+| O resumo "Mais detalhes" do dashboard contava as posições marcadas pela lista limitada a 5: com 7 pendentes, mostrava 5. | Baixa (texto) | Agora usa a contagem completa. Teste de regressão em `e2e/clarity.spec.ts`: 7 marcadas → o resumo diz 7, e a lista aberta mostra 5. |
+
+Visto e **não** corrigido, por ser anterior à Sprint 4.2 e fora do escopo: o cartão "Revisões pendentes" soma `due + pendingBookmarks.length`, que também usa a lista limitada a 5. O texto de apoio do cartão já usa a contagem completa.
+
+### 8.2 Verificações da auditoria
+
+- **Selos:**
+  - Roque recebe o selo na casa do rei (`to` do chess.js); promoção, na casa de destino.
+  - A classe `book` nunca é gerada pelo analisador; inconclusivo fica sem selo.
+  - A análise usa a mesma `review.classification` da lista de lances e da explicação.
+  - O exercício classifica com `classifyMove`, não com um segundo sistema, e o resultado não é gravado.
+  - Diferença conhecida: o exercício usa os limites **atuais** das configurações; a análise gravada usou os limites da época em que foi feita.
+- **Integridade:** de `38bd527` a `HEAD`, nenhuma alteração em `package.json`/lockfile, `src/db/database.ts`, `src/services/engine`, `src/services/backup`, `public/` ou `scripts/`. Nenhuma chamada de rede nova.
+- **Larguras extras** (verificação temporária, não versionada) em 390, 430, 768 e 1280 px, com toque nas três primeiras, cobrindo partidas, exercício, análise e dashboard:
+  - sem rolagem horizontal;
+  - cartão de tarefa acima do tabuleiro até 1000 px e ao lado dele acima disso;
+  - botões ≥ 44 px no toque;
+  - resumos recolhíveis ≥ 44 px;
+  - selo dentro da casa e com ≥ 16 px.
+- **Ponto de atenção anterior à sprint:** em 768 px o tabuleiro ocupa toda a largura, e o painel de ações começa abaixo da dobra.
+
+### 8.3 Resultados locais (após a correção)
+
+| Verificação | Resultado |
+|---|---|
+| typecheck | ok |
+| Vitest | 322 |
+| Stockfish real | 21 |
+| build | ok |
+| Playwright | 47 (46 + 1 de regressão) |
+
+Rodado numa cópia temporária da configuração na porta 4175, com build novo. O `vite preview` antigo continua ocupando a porta 4173.
+
+## 9. Roteiro do teste em celular físico (Sprint 4.2)
+
+Use outra origem que não a dos seus dados (por exemplo, o IP da máquina numa porta de teste) ou faça um backup antes. Registre aparelho, navegador e o resultado de cada item. **Pendente: não marcar como aprovado sem execução.**
+
+1. **Colar PGN:** em Partidas, copie uma partida de outro app, toque em "Ou cole o PGN aqui", cole e toque em "Importar texto".
+   - Esperado: relatório "Texto colado · 1 importada(s)" e a caixa limpa.
+   - Colar de novo: o relatório mostra "1 duplicada(s)".
+   - Colar texto inválido: o relatório mostra "com erro" e o texto continua na caixa.
+2. **Teclado:** com o teclado virtual aberto sobre a caixa de PGN, o botão "Importar texto" continua alcançável rolando a tela.
+3. **Exercício (retrato):**
+   - O cartão de tarefa ("Sua vez · Brancas/Pretas jogam" e o objetivo) fica acima do tabuleiro e é legível sem zoom.
+   - A legenda indica o último lance do adversário quando a partida de origem existe.
+   - Faça um lance certo: o selo ★ aparece no canto da casa de destino, sem cobrir a peça, e o cartão muda para "Resolvido".
+   - Faça um lance errado em outro exercício: aparece selo ?! / ? / ?? e "Ver solução" fica como botão principal.
+4. **Um botão principal:** em cada estado (jogando, verificando, resolvido, não resolvido, solução mostrada) há no máximo um botão dourado.
+5. **Detalhes:** "Origem e histórico" abre e fecha com um toque, e o resumo mostra a última tentativa.
+6. **Exercício das Pretas:** o tabuleiro aparece do lado das Pretas e a legenda diz isso.
+7. **Análise:** abra uma partida analisada e avance até um erro.
+   - O selo aparece na casa de destino.
+   - A faixa "3. Nd4 · ?? Erro grave · seta verde: melhor era …" corresponde ao lance exibido.
+   - A explicação aparece logo depois da lista de lances.
+   - Ao explorar uma variante, a faixa diz "Explorando uma variante" e o selo some.
+8. **Dashboard:** "Seu próximo treino" é o primeiro bloco; "Mais detalhes" abre e mostra temas, aberturas e posições marcadas.
+9. **Paisagem:** gire o aparelho na tela de exercício e na de análise. Não pode haver rolagem horizontal, e o selo continua dentro da casa.
+10. **Tamanhos:** repita os itens 3 e 7 num aparelho pequeno (cerca de 360 px) e num grande (cerca de 430 px), ou num tablet.

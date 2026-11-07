@@ -66,6 +66,7 @@ export function DashboardPage() {
   const topErrors = themeCounts(inputs).slice(0, 5);
   const bestThemes = themePerformance(exercises, attempts).filter((t) => t.attempts >= 3).slice(0, 3);
   const studied = openingStudy(openingAttempts).slice(0, 4);
+  const pendingBookmarkCount = bookmarks.filter((b) => !b.reviewedAt).length;
   const pendingBookmarks = bookmarks.filter((b) => !b.reviewedAt).slice(0, 5);
   const maxErr = topErrors[0]?.count ?? 1;
 
@@ -179,7 +180,7 @@ export function DashboardPage() {
       <details className="panel details-panel dash-more" data-testid="dash-more">
         <summary>
           <span className="details-title">Mais detalhes</span>
-          <span className="xs faint">temas fortes, aberturas estudadas{pendingBookmarks.length > 0 ? ` · ${pendingBookmarks.length} posição(ões) marcada(s)` : ''}</span>
+          <span className="xs faint">temas fortes, aberturas estudadas{pendingBookmarkCount > 0 ? ` · ${pendingBookmarkCount} posição(ões) marcada(s)` : ''}</span>
           <ChevronDown size={16} className="details-chevron" aria-hidden="true" />
         </summary>
         <div className="grid-3" style={{ marginTop: '0.8rem' }}>
