@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Target } from 'lucide-react';
+import { ListChecks, Target } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { THEME_LABEL } from '../../services/pedagogy/concepts';
@@ -88,9 +88,14 @@ export function TrainingPage() {
           <h1>Treinar</h1>
           <p>Exercícios criados a partir das suas próprias partidas. Erros voltam mais cedo; acertos sem dica ganham intervalos maiores.</p>
         </div>
-        <button className="btn btn-primary" disabled={dueCount === 0} onClick={() => due[0] && navigate(`/train/${due[0].id}`)}>
-          <Target size={16} /> Revisar pendentes ({dueCount})
-        </button>
+        <div className="row">
+          <button className="btn btn-primary" disabled={!exercises?.length} onClick={() => navigate('/train/session')} data-testid="open-session">
+            <ListChecks size={16} /> Sessão guiada
+          </button>
+          <button className="btn" disabled={dueCount === 0} onClick={() => due[0] && navigate(`/train/${due[0].id}`)}>
+            <Target size={16} /> Revisar pendentes ({dueCount})
+          </button>
+        </div>
       </header>
       <section className="panel">
         <div className="filters">

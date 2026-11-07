@@ -1,6 +1,7 @@
-import type { MoveReview, SkillEstimate, Theme } from '../../types/domain';
+import type { Attempt, Exercise, MoveReview, Skill, SkillEstimate, Theme } from '../../types/domain';
 import { detectConcepts, THEME_LABEL, isVerifiedConcept } from '../pedagogy/concepts';
 import { SKILL_LABEL } from '../adaptation/skills';
+import { patternKey, performanceSentence, PRIORITY_FACTOR, themePerformanceByKey, TWO_SIDED, type ThemePerformance } from './themeEvidence';
 
 export interface EvidenceRef {
   gameId: string;
@@ -15,11 +16,19 @@ export interface Recommendation {
   theme?: Theme;
   evidence: EvidenceRef[];
   action: { label: string; to: string };
+  /** What a guided session should prioritize after due reviews. */
+  focus?: { key: string; theme: Theme } | { skill: Skill };
+  /** Exercise evidence behind a theme recommendation. */
+  performance?: ThemePerformance;
 }
 
 export interface AnalyzedGameInput {
   gameId: string;
   userColor?: 'w' | 'b';
+  /** Reliable game date (see gameTime); absent when the PGN has none, and then the game counts as oldest. */
+  at?: number;
+  /** Tie-break between games of the same date. */
+  importedAt?: number;
   reviews: MoveReview[];
   replyLines: Record<number, string[]>;
 }
@@ -36,9 +45,10 @@ const THEME_ADVICE: Partial<Record<Theme, string>> = {
 };
 
 const MIN_OCCURRENCES = 2;
-
-/** Motifs that exist on both sides: the player's missed tactic vs the opponent's allowed one. */
-const TWO_SIDED: readonly Theme[] = ['fork', 'discovered_attack', 'pin', 'overloaded', 'deflection', 'combination'];
+/** Recurring patterns are counted in the most recent analyzed games only; older games stay in the history views. */
+export const RECENT_GAMES = 10;
+/** From this many due reviews on, reviews come first (half the default daily goal of 10). */
+export const DUE_FIRST_THRESHOLD = 5;
 
 const OPPONENT_ADVICE: Partial<Record<Theme, string>> = {
   fork: 'Em {n} posições, seu lance permitiu um ataque duplo do adversário. Antes de cada lance, procure as casas de onde uma peça adversária atingiria duas peças suas ou o rei.',
@@ -81,7 +91,7 @@ export function errorThemes(games: readonly AnalyzedGameInput[]): Map<string, Er
       const c = detectConcepts(r, g.replyLines[r.ply] ?? [])[0];
       if (!c || !isVerifiedConcept(c)) continue;
       const side = TWO_SIDED.includes(c.theme) ? c.side : undefined;
-      const key = side ? `${c.theme}:${side}` : c.theme;
+      const key = patternKey(c.theme, side);
       const cur = map.get(key) ?? { key, theme: c.theme, ...(side ? { side } : {}), label: patternLabel(c.theme, side), refs: [] };
       map.set(key, { ...cur, refs: [...cur.refs, { gameId: g.gameId, ply: r.ply, san: r.san }] });
     }
@@ -89,20 +99,113 @@ export function errorThemes(games: readonly AnalyzedGameInput[]): Map<string, Er
   return map;
 }
 
+/** Chronological order; a game without a reliable date is older than every dated one. */
+function byDate(a: AnalyzedGameInput, b: AnalyzedGameInput): number {
+  if (a.at === undefined && b.at === undefined) return 0;
+  if (a.at === undefined) return -1;
+  if (b.at === undefined) return 1;
+  return a.at - b.at;
+}
+
 /**
- * "Seu próximo treino": only emits a theme recommendation when the same
- * verified pattern appears at least twice in the history.
+ * The RECENT_GAMES most recent analyzed games. Games without a reliable date
+ * sort before every dated game (by import time among themselves), so they
+ * only fill the window when there are not enough dated games.
  */
-export function nextTraining(input: { games: readonly AnalyzedGameInput[]; dueReviews: number; totalGames: number; profile: readonly SkillEstimate[] }): Recommendation {
+export function recentGames(games: readonly AnalyzedGameInput[], size = RECENT_GAMES): AnalyzedGameInput[] {
+  return games
+    .map((g, i) => ({ g, i }))
+    .sort((a, b) => byDate(a.g, b.g) || (a.g.importedAt ?? 0) - (b.g.importedAt ?? 0) || a.i - b.i)
+    .slice(-size)
+    .map((x) => x.g);
+}
+
+export interface RankedPattern extends ErrorPattern {
+  performance?: ThemePerformance;
+  score: number;
+}
+
+/**
+ * Recurring patterns of the recent window (≥ MIN_OCCURRENCES), ranked by
+ * occurrences × the exercise-performance factor: a pattern the player already
+ * solves in exercises loses priority, one they keep failing gains it.
+ */
+export function rankPatterns(games: readonly AnalyzedGameInput[], perf: ReadonlyMap<string, ThemePerformance>): RankedPattern[] {
+  return [...errorThemes(recentGames(games)).values()]
+    .filter((p) => p.refs.length >= MIN_OCCURRENCES)
+    .map((p) => {
+      const performance = perf.get(p.key);
+      return { ...p, ...(performance ? { performance } : {}), score: p.refs.length * PRIORITY_FACTOR[performance?.state ?? 'insufficient'] };
+    })
+    .sort((a, b) => b.score - a.score || b.refs.length - a.refs.length);
+}
+
+const dueSentence = (due: number): string => (due > 0 ? ` Você tem ${due} revisão(ões) vencida(s).` : '');
+
+export interface TrainingInput {
+  games: readonly AnalyzedGameInput[];
+  dueReviews: number;
+  totalGames: number;
+  profile: readonly SkillEstimate[];
+  exercises?: readonly Exercise[];
+  attempts?: readonly Attempt[];
+}
+
+/**
+ * "Seu próximo treino", in priority order:
+ * 1. many due reviews (≥ DUE_FIRST_THRESHOLD);
+ * 2. the top recurring pattern of the recent games, weighted by exercise performance
+ *    (a mastered pattern yields to any due review);
+ * 3. due reviews;
+ * 4. a pattern the player keeps failing in exercises;
+ * 5. a competence flagged for review; 6. broaden the diagnosis.
+ */
+export function nextTraining(input: TrainingInput): Recommendation {
   if (input.totalGames === 0) {
     return { kind: 'import', title: 'Importe sua primeira partida', message: 'Importe um arquivo PGN para que o ChessQuest analise seus lances e monte um plano de treino.', evidence: [], action: { label: 'Importar partidas', to: '/games' } };
   }
-  const top = [...errorThemes(input.games).values()].filter((p) => p.refs.length >= MIN_OCCURRENCES).sort((a, b) => b.refs.length - a.refs.length)[0];
-  if (top) {
-    return { kind: 'theme', title: top.label, message: adviceFor(top), theme: top.theme, evidence: top.refs, action: { label: 'Treinar este tema', to: `/train?theme=${top.theme}` } };
+  const perf = themePerformanceByKey(input.exercises ?? [], input.attempts ?? []);
+  const ranked = rankPatterns(input.games, perf);
+  const top = ranked[0];
+  const due = input.dueReviews;
+  if (due >= DUE_FIRST_THRESHOLD || (due > 0 && top?.performance?.state === 'mastered')) {
+    // The session's focus after the reviews: the best-ranked pattern not already mastered.
+    const next = ranked.find((p) => p.performance?.state !== 'mastered');
+    const after = next ? ` Depois delas, o foco é: ${next.label.toLowerCase()}.` : '';
+    return { kind: 'reviews', title: 'Revisões pendentes', message: `Você tem ${due} exercício(s) para revisar hoje.${after}`, evidence: [], action: { label: 'Revisar agora', to: '/train?filter=due' }, ...(next ? { focus: { key: next.key, theme: next.theme } } : {}) };
   }
-  if (input.dueReviews > 0) {
-    return { kind: 'reviews', title: 'Revisões pendentes', message: `Você tem ${input.dueReviews} exercício(s) para revisar hoje.`, evidence: [], action: { label: 'Revisar agora', to: '/train?filter=due' } };
+  if (top) {
+    const window = recentGames(input.games);
+    const undated = window.filter((g) => g.at === undefined).length;
+    const undatedNote = undated > 0 ? ` ${undated} delas sem data válida no PGN (contadas como as mais antigas).` : '';
+    const message = `${adviceFor(top)} Contagem nas últimas ${window.length} partida(s) analisada(s).${undatedNote} ${performanceSentence(top.performance)}${dueSentence(due)}`;
+    return {
+      kind: 'theme',
+      title: top.label,
+      message,
+      theme: top.theme,
+      evidence: top.refs,
+      action: { label: 'Treinar este tema', to: `/train?theme=${top.theme}` },
+      focus: { key: top.key, theme: top.theme },
+      ...(top.performance ? { performance: top.performance } : {}),
+    };
+  }
+  if (due > 0) {
+    return { kind: 'reviews', title: 'Revisões pendentes', message: `Você tem ${due} exercício(s) para revisar hoje.`, evidence: [], action: { label: 'Revisar agora', to: '/train?filter=due' } };
+  }
+  const weakest = [...perf.values()].filter((p) => p.state === 'struggling').sort((a, b) => a.independent / a.exercises - b.independent / b.exercises || b.exercises - a.exercises)[0];
+  if (weakest) {
+    const label = patternLabel(weakest.theme, weakest.side);
+    return {
+      kind: 'theme',
+      title: label,
+      message: `${performanceSentence(weakest)} Vale reforçar este tema antes de avançar.`,
+      theme: weakest.theme,
+      evidence: [],
+      action: { label: 'Treinar este tema', to: `/train?theme=${weakest.theme}` },
+      focus: { key: weakest.key, theme: weakest.theme },
+      performance: weakest,
+    };
   }
   // A competence flagged for review, with the numbers that flagged it.
   const review = input.profile.filter((p) => p.confidence === 'needs_review' && p.interval).sort((a, b) => (a.recentRate ?? a.level ?? 1) - (b.recentRate ?? b.level ?? 1))[0];
@@ -115,6 +218,7 @@ export function nextTraining(input: { games: readonly AnalyzedGameInput[]; dueRe
       message: `${SKILL_LABEL[review.skill]} precisa de revisão (${[recent, range].filter(Boolean).join('; ')}, em ${review.events} evidência(s)). Treine exercícios desta competência.`,
       evidence: [],
       action: { label: 'Treinar esta competência', to: `/train?skill=${review.skill}` },
+      focus: { skill: review.skill },
     };
   }
   const weak = input.profile.filter((p) => p.confidence === 'insufficient');

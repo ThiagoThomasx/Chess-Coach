@@ -227,11 +227,23 @@ Antes, uma competência com muitas evidências e taxa baixa aparecia como "desem
 
 ## 8. Recomendações e dashboard
 
-"Seu próximo treino", em ordem de prioridade:
+"Seu próximo treino" (Sprint 4.1: ciclo adaptativo; detalhes em `docs/SPRINT4-1-RELATORIO.md`), em ordem de prioridade:
 
-1. **Padrão de erro recorrente**: o mesmo conceito verificado **do mesmo lado** em pelo menos 2 lances do usuário (com a cor definida). O lado faz parte do padrão: permitir um ataque duplo ("Ataque duplo do adversário") e deixar de aplicar um ("Ataque duplo não aproveitado") são fraquezas diferentes, com conselhos diferentes. A recomendação lista os lances que a justificam, com link para a posição.
-2. Revisões pendentes.
-3. **Competência que precisa de revisão**, com os números que a sinalizaram (taxa recente, intervalo, quantidade de evidências) e link para os exercícios dessa competência (`/train?skill=…`).
-4. Mais diagnóstico (competências com evidências insuficientes); sem partidas, convida a importar.
+1. **Muitas revisões vencidas** (≥ 5, metade da meta diária padrão): as revisões vêm primeiro, e a mensagem cita o padrão que vem depois delas.
+2. **Padrão de erro recorrente** nas **10 partidas analisadas mais recentes** (pela data do PGN; empate desfeito pela importação). Uma data só é confiável se for uma data de calendário real (`AAAA.MM.DD`, ano ≥ 1400) e não posterior ao dia da importação; partidas sem data confiável (ausente, incompleta como `2024.??.??`, inválida como `2023.13.45` ou futura) nunca recebem uma data inventada: contam como as mais antigas, só entram na janela se faltarem partidas datadas, e a mensagem diz quantas estão nela. O padrão é o mesmo conceito verificado **do mesmo lado** em pelo menos 2 lances do usuário (com a cor definida). O lado faz parte do padrão: permitir um ataque duplo ("Ataque duplo do adversário") e deixar de aplicar um ("Ataque duplo não aproveitado") são fraquezas diferentes, com conselhos diferentes. A recomendação lista os lances que a justificam, com link para a posição. A prioridade é `ocorrências recentes × fator do desempenho nos exercícios do mesmo padrão`:
+   - cada exercício conta **uma vez**, com o resultado da última tentativa registrada; entram os 10 exercícios do padrão tentados mais recentemente;
+   - menos de 3 exercícios: **amostra insuficiente**, fator 1 (nada muda);
+   - acerto **sem ajuda** < 50%: **dificuldade**, fator 1,5 (acertos com dica não contam como independentes);
+   - ≥ 5 exercícios, ≥ 80% sem ajuda e ao menos 2 deles de dificuldade ≥ 2: **dominado nos exercícios**, fator 0,5; qualquer revisão vencida passa à frente dele;
+   - caso contrário, fator 1.
+   O histórico antigo continua nas telas de progresso; só deixa de decidir a recomendação.
+3. Revisões pendentes.
+4. **Padrão em dificuldade só nos exercícios** (sem recorrência recente nas partidas), com os números dos exercícios.
+5. **Competência que precisa de revisão**, com os números que a sinalizaram (taxa recente, intervalo, quantidade de evidências) e link para os exercícios dessa competência (`/train?skill=…`).
+6. Mais diagnóstico (competências com evidências insuficientes); sem partidas, convida a importar.
+
+**Revisão vencida** = exercício já tentado cuja data de revisão chegou (`srs.lastReviewedAt` definido e `dueAt ≤ agora`). Um exercício novo nasce com `dueAt` = criação, mas é material novo, não revisão; na lista de treino ele continua marcado "Pendente" como antes. Exercícios de motivo bilateral criados antes de existir `motifSide` contam como tática do próprio jogador.
+
+**Sessão guiada** (`/train/session`): fila de até `dailyGoal` exercícios, sem repetir nenhum, nesta ordem: revisões vencidas (mais atrasadas primeiro), exercícios do foco recomendado, exercícios a ±1 da dificuldade-alvo da competência. Exercícios não vencidos cuja última tentativa foi um acerto sem ajuda ficam de fora: a repetição espaçada já decidiu quando eles voltam. Também ficam de fora os tentados há menos de 10 minutos (janela de prática), porque uma nova tentativa não seria gravada. O plano fica só no armazenamento local do navegador, válido até o fim do dia ou até "Encerrar"; os resultados são as tentativas normais (mesma janela de prática, mesmo reagendamento, mesmas evidências de perfil).
 
 O dashboard mostra partidas analisadas (de quantas importadas), exercícios resolvidos, acerto independente, revisões pendentes, desempenho recente por dia, padrões de erro recorrentes e as competências **agrupadas por estado** (precisam revisar, em desenvolvimento, consolidadas, evidências insuficientes) com o intervalo de cada uma — sem rating.

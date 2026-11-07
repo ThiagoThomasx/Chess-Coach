@@ -405,3 +405,57 @@
   margin: 0;
   padding: 0;
 }
+
+/* Guided session */
+.session-bar {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--border));
+  min-width: 0;
+}
+
+.session-bar .row {
+  flex-wrap: wrap;
+}
+
+.session-plan-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  font-size: var(--text-sm);
+}
+
+.summary-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+  margin: 0.75rem 0 0;
+}
+
+.summary-counts > div {
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.summary-counts dt {
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--text-muted);
+}
+
+.summary-counts dd {
+  margin: 0.15rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+}
+
+/* The session bar spans the page header, above the exercise title. */
+.page-head > div:has(> .session-bar) {
+  flex: 1 1 100%;
+  min-width: 0;
+}
