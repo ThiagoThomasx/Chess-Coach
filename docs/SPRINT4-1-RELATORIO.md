@@ -2,7 +2,7 @@
 
 - **Branch:** `feat/sprint4-1-adaptive-training`, criada a partir de `055f6e1`, o head do PR #1 auditado em `docs/SPRINT4-AUDITORIA.md`.
 - **Data:** 2026-11-06.
-- **Situação:** implementado e verificado localmente, e auditado na rodada 4.1.1 (§10). Ainda sem commit, push ou PR.
+- **Situação:** implementado, auditado na rodada 4.1.1 (§10) e publicado no PR #2 (base `fix/sprint3-phase1`). O código validado é o commit `4cc9d98`, com CI e bateria local verdes (§11). O teste em celular físico continua **pendente**.
 
 ## 0. Pré-verificação (Fase 0)
 
@@ -293,3 +293,69 @@ A revisão do diff completo não encontrou problema CRITICAL, HIGH ou MEDIUM. Os
 | 5 | A ordenação por data dependia de `NaN` ser falso no `\|\|` (duas partidas sem data) | Comparador explícito `byDate`, mesmo comportamento | `tests/adaptive-boundaries.test.ts` › *ordering* |
 
 O mesmo `tests/adaptive-boundaries.test.ts` passou de 16 para 17 testes. O Playwright continua com 38: só ganhou verificações dentro de um teste que já existia. Os números da tabela acima vêm da bateria rodada depois dessas correções.
+
+## 11. Validação do PR #2
+
+**Código validado:** commit `4cc9d98`, head do PR #2 no momento da validação, em 2026-11-07. Esta seção foi escrita depois, num commit que só altera este documento.
+
+### Estado no GitHub
+| Item | Estado |
+|---|---|
+| PR #2 | Aberto, pronto para revisão (não é rascunho); `feat/sprint4-1-adaptive-training` → `fix/sprint3-phase1`; sem conflitos (`MERGEABLE`, `CLEAN`) |
+| CI do PR #2 | 1 check, `verify` (run 42327829073): **aprovado** em `4cc9d98` |
+| Revisões e comentários | Nenhum |
+| PR #1 | Aberto, sem conflitos; `fix/sprint3-phase1` → `main`, head `055f6e1`. É dependência: quando entrar na `main`, o PR #2 precisa ser rebaseado sobre ela antes da integração final |
+
+O check `verify` roda, nesta ordem:
+- `npm ci`, que copia o Stockfish para `public/engine`;
+- a checagem dos arquivos do motor;
+- o typecheck;
+- o Vitest completo, que inclui o Stockfish real;
+- o build;
+- o Playwright completo.
+
+No log do CI aparecem **Vitest 289/289** e **Playwright 38/38**.
+
+### Bateria local em `4cc9d98`
+A árvore de trabalho estava limpa, exceto `.claude/`, que não é rastreado.
+
+| Verificação | Resultado |
+|---|---|
+| Typecheck | 0 erros |
+| Vitest completo (18 arquivos) | **289/289** |
+| Stockfish real (`test:engine`) | **21/21** |
+| Build de produção | OK |
+| Playwright completo | **38/38** |
+| Layout da sessão em 360, 390, 430 e 768 px | 4/4 (fazem parte dos 38) |
+| Arquivos do motor | `.js` e `.wasm` presentes em `public/engine` e `dist/engine`, com SHA-256 iguais aos do pacote npm `stockfish` |
+| Banco, backup, motor, dependências, CI | Nenhuma alteração desde `055f6e1` em `package*.json`, `src/db`, `src/services/engine`, `src/services/backup`, `public`, `scripts`, `.github` e `vite.config.ts` |
+| Chamadas de rede | Nenhuma adição de `fetch`, `XMLHttpRequest`, `WebSocket`, `sendBeacon` ou URL em `src` |
+
+### Divergência 288 × 289
+- **288** apareceu só na mensagem de entrega da auditoria 4.1.1. Ela foi escrita antes da revisão final pré-commit.
+- A revisão pré-commit acrescentou **1 teste** ao Vitest: o de ordenação de partidas sem data, em `tests/adaptive-boundaries.test.ts`, que passou de 16 para 17 testes.
+- O relatório deste commit e a descrição do PR já registram 289, e a contagem real em `4cc9d98` é 289 tanto local quanto no CI. A conta fecha: 270 da Sprint 4.1, mais 17 de fronteira, datas e ordenação, mais 2 de sessão.
+- A suíte roda inteira: 18 arquivos, sem filtro nem teste pulado.
+
+### Teste em celular físico: roteiro (pendente)
+**Ainda não foi feito.** Só houve emulação no Playwright. Este roteiro é para executar num aparelho real.
+
+**Preparação:**
+1. No computador, rode `npm run build` e depois `npm run preview -- --host --port 4173`.
+2. No celular, na mesma rede Wi-Fi, abra `http://<IP-do-computador>:4173/#/`.
+3. Os dados do celular são próprios daquele navegador. Para haver exercícios, importe um PGN com erros em **Partidas** e analise uma partida até o fim.
+
+| # | Passo | Esperado | É falha se |
+|---|---|---|---|
+| 1 | Abrir o app | O dashboard carrega e o menu inferior aparece sem cortes | Página em branco, erro, ou conteúdo cortado na lateral |
+| 2 | Treino → "Sessão guiada" → "Iniciar sessão" | A tela mostra a recomendação, as contagens por grupo e o botão com o tamanho da fila; depois aparece "Exercício 1 de N" | Botão sem resposta, fila vazia mesmo havendo exercícios, ou contagem diferente da fila |
+| 3 | Resolver um exercício | O lance é aceito por toque ou arraste, o feedback aparece e surge "Próximo exercício" | O tabuleiro não aceita o lance, não há feedback, ou aparece "Pular" depois de responder |
+| 4 | Tocar "Interromper" | Volta para Treino | Erro, ou a sessão continua na tela |
+| 5 | Ir para outra tela (por exemplo, Dashboard), esperar carregar e voltar a Treino → "Sessão guiada" | A sessão retoma no **próximo** exercício ainda não feito, com a posição correta ("Exercício 2 de N") | Reaparece o exercício já resolvido, a sessão some, ou é criada uma fila nova |
+| 6 | Conferir que nada foi duplicado | O resumo, mais adiante, conta 1 exercício feito por exercício resolvido | Contagem maior que o número de exercícios resolvidos |
+| 7 | Tocar "Pular" num exercício ainda não respondido | Avança para o seguinte; o pulado não volta nesta sessão | O exercício pulado reaparece, ou conta como erro |
+| 8 | Tocar "Encerrar" | O resumo mostra os realizados, sem ajuda, com dicas, erros, revisões, pulados, competências e a próxima recomendação | Números diferentes do que foi feito, ou a recomendação ausente |
+| 9 | Recarregar a página na tela de resumo e voltar a "Sessão guiada" | Aparece a tela de **iniciar** uma sessão nova; a encerrada não volta como ativa. Com uma sessão só interrompida, recarregar retoma no exercício pendente | Sessão encerrada retomada como ativa, ou sessão interrompida perdida |
+| 10 | Layout em tela pequena, em todas as telas acima | Tabuleiro inteiro visível; botões de pelo menos ~1 cm, sem toques errados; nenhuma rolagem horizontal; barra da sessão sem sobreposição; menu inferior sem cobrir os botões | Algum botão difícil de tocar ou coberto, rolagem lateral, tabuleiro cortado ou texto sobreposto |
+
+Registre o modelo do aparelho, o navegador e a largura da tela. Para cada falha, inclua uma captura de tela.
