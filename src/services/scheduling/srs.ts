@@ -46,3 +46,12 @@ export function outcomeOf(correct: boolean, hintsUsed: number, revealed: boolean
 export function isDue(state: SrsState, now: number): boolean {
   return state.dueAt <= now;
 }
+
+/**
+ * A due *review*: an exercise already attempted whose next review date has
+ * come. New exercises are created due immediately (dueAt = creation time), but
+ * they are new material, not reviews.
+ */
+export function isDueReview(state: SrsState, now: number): boolean {
+  return state.lastReviewedAt !== undefined && state.dueAt <= now;
+}

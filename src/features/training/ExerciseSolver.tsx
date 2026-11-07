@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowLeft, Eye, Lightbulb, RotateCcw, SkipForward, Trash2 } from 'lucide-react';
@@ -32,7 +33,14 @@ export function ExerciseSolver() {
   return <Solver key={ex.id} ex={ex} settings={settings} />;
 }
 
-function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
+type SolverProps = {
+  ex: Exercise;
+  settings: Settings;
+  /** Inside a guided session: replaces the back link, and the session drives navigation. */
+  session?: { header: ReactNode; controls: ReactNode };
+};
+
+export function Solver({ ex, settings, session }: SolverProps) {
   const navigate = useNavigate();
   const s = useExerciseSession(ex, settings);
   const attempts = useLiveQuery(() => getDb().attempts.where('exerciseId').equals(ex.id).sortBy('at'), [ex.id], []);
@@ -45,9 +53,13 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
     <div className="page">
       <header className="page-head">
         <div>
-          <Link to="/train" className="small row touch-link">
-            <ArrowLeft size={14} /> Treino
-          </Link>
+          {session ? (
+            session.header
+          ) : (
+            <Link to="/train" className="small row touch-link">
+              <ArrowLeft size={14} /> Treino
+            </Link>
+          )}
           {/* The theme gives the motif away: it is shown only once an attempt has ended. */}
           <h1 style={{ marginTop: '0.3rem' }} data-testid="exercise-title">
             {done || attempts.length > 0 ? THEME_LABEL[ex.theme] : 'Exercício'}
@@ -90,12 +102,13 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
               <button className="btn" onClick={s.retry} disabled={!done}>
                 <RotateCcw size={15} /> Resolver de novo
               </button>
-              {nextDue && (
+              {!session && nextDue && (
                 <button className="btn btn-ghost" onClick={() => navigate(`/train/${nextDue}`)}>
                   <SkipForward size={15} /> Próximo pendente
                 </button>
               )}
             </div>
+            {session?.controls}
             {s.nextDue && (
               <p className="xs muted" style={{ marginTop: '0.75rem' }} data-testid="next-review">
                 Resultado salvo. Próxima revisão: {new Date(s.nextDue).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
@@ -126,14 +139,16 @@ function Solver({ ex, settings }: { ex: Exercise; settings: Settings }) {
           <section className="panel">
             <div className="panel-head">
               <h2>Origem e histórico</h2>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  if (confirm('Excluir este exercício e seu histórico?')) void deleteExercise(ex.id).then(() => navigate('/train'));
-                }}
-              >
-                <Trash2 size={14} /> Excluir
-              </button>
+              {!session && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    if (confirm('Excluir este exercício e seu histórico?')) void deleteExercise(ex.id).then(() => navigate('/train'));
+                  }}
+                >
+                  <Trash2 size={14} /> Excluir
+                </button>
+              )}
             </div>
             {ex.gameId ? (
               <Link to={`/analysis/${ex.gameId}`} className="small touch-link">

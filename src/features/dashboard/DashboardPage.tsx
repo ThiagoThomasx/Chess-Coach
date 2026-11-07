@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Bookmark, Crown, FileUp } from 'lucide-react';
+import { ArrowRight, Bookmark, Crown, FileUp, ListChecks } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { useSettings } from '../../hooks/useSettings';
 import { EmptyState } from '../../components/feedback/EmptyState';
@@ -9,6 +9,7 @@ import { estimateProfile } from '../../services/adaptation/skills';
 import { attemptStats, openingStudy, themeCounts, themePerformance, toAnalyzedInputs } from '../../services/stats/stats';
 import { THEME_LABEL } from '../../services/pedagogy/concepts';
 import { findOpening } from '../../services/openings/library';
+import { isDueReview } from '../../services/scheduling/srs';
 import { RecentPerformanceChart } from './RecentPerformanceChart';
 import { SkillStates } from './SkillStates';
 
@@ -56,8 +57,9 @@ export function DashboardPage() {
 
   const inputs = toAnalyzedInputs(games, analyses);
   const profile = estimateProfile(events, now);
-  const due = exercises.filter((e) => e.srs.dueAt <= now).length;
-  const rec = nextTraining({ games: inputs, dueReviews: due, totalGames: games.length, profile });
+  // Reviews only: a never-attempted exercise is new material, not a pending review.
+  const due = exercises.filter((e) => isDueReview(e.srs, now)).length;
+  const rec = nextTraining({ games: inputs, dueReviews: due, totalGames: games.length, profile, exercises, attempts });
   const st = attemptStats(attempts);
   const solved = new Set(attempts.filter((a) => a.correct && !a.revealed).map((a) => a.exerciseId)).size;
   const today = attempts.filter((a) => new Date(a.at).toDateString() === new Date(now).toDateString()).length;
@@ -98,8 +100,13 @@ export function DashboardPage() {
             ))}
           </div>
         )}
-        <div>
-          <Link className="btn btn-primary" to={rec.action.to}>
+        <div className="row">
+          {exercises.length > 0 && (
+            <Link className="btn btn-primary" to="/train/session" data-testid="start-session-link">
+              <ListChecks size={15} /> Sessão guiada de hoje
+            </Link>
+          )}
+          <Link className={exercises.length > 0 ? 'btn' : 'btn btn-primary'} to={rec.action.to}>
             {rec.action.label} <ArrowRight size={15} />
           </Link>
         </div>

@@ -11,6 +11,7 @@ const GamesPage = lazy(() => import('../features/games/GamesPage').then((m) => (
 const AnalysisPage = lazy(() => import('../features/analysis/AnalysisPage').then((m) => ({ default: m.AnalysisPage })));
 const TrainingPage = lazy(() => import('../features/training/TrainingPage').then((m) => ({ default: m.TrainingPage })));
 const ExerciseSolver = lazy(() => import('../features/training/ExerciseSolver').then((m) => ({ default: m.ExerciseSolver })));
+const SessionPage = lazy(() => import('../features/training/SessionPage').then((m) => ({ default: m.SessionPage })));
 const OpeningsPage = lazy(() => import('../features/openings/OpeningsPage').then((m) => ({ default: m.OpeningsPage })));
 const ProgressPage = lazy(() => import('../features/progress/ProgressPage').then((m) => ({ default: m.ProgressPage })));
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
@@ -32,6 +33,7 @@ export function App() {
             <Route path="games" element={<GamesPage />} />
             <Route path="analysis/:gameId" element={<AnalysisPage />} />
             <Route path="train" element={<TrainingPage />} />
+            <Route path="train/session" element={<SessionPage />} />
             <Route path="train/:exerciseId" element={<ExerciseSolver />} />
             <Route path="openings" element={<OpeningsPage />} />
             <Route path="progress" element={<ProgressPage />} />
