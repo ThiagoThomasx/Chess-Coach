@@ -128,6 +128,12 @@ export interface GameAnalysis {
   positions: (PositionAnalysis | null)[];
   reviews: MoveReview[];
   error?: string;
+  /**
+   * Exercises and evidence derived from this analysis: 'pending' from the
+   * moment they must be (re)built for the game's color until they match it.
+   * Absent on analyses saved before Sprint 4.3. Not indexed (no schema change).
+   */
+  derivation?: 'pending' | 'done';
   startedAt: number;
   updatedAt: number;
 }

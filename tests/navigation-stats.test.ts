@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { displayed, navReducer, type NavState } from '../src/features/analysis/navigation';
 import { replayGame, positionsOf } from '../src/services/chess/position';
-import { attemptStats, dailyPerformance, openingResults, dayKey } from '../src/services/stats/stats';
-import type { Attempt, Game } from '../src/types/domain';
+import { attemptStats, dailyPerformance, errorDistribution, openingResults, dayKey } from '../src/services/stats/stats';
+import type { Attempt, Game, MoveReview } from '../src/types/domain';
 
 const moves = ['e4', 'e5', 'Nf3', 'Nc6'];
 const plies = replayGame(moves);
@@ -65,5 +65,20 @@ describe('stats', () => {
     const r = openingResults([g('1-0', 'w'), g('1-0', 'b'), g('1/2-1/2', 'w')]);
     expect(r[0]).toMatchObject({ games: 3 });
     expect(r[0]?.score).toBeCloseTo(0.5);
+  });
+});
+
+describe('move distribution (Sprint 4.3)', () => {
+  const review = (color: 'w' | 'b', classification: MoveReview['classification']) => ({ color, classification }) as MoveReview;
+  const reviews = [review('w', 'best'), review('b', 'blunder'), review('w', 'mistake'), review('b', 'blunder')];
+
+  it("counts only the user's moves", () => {
+    const d = errorDistribution([{ gameId: 'g', userColor: 'w', reviews, replyLines: {} }]);
+    expect(d).toMatchObject({ best: 1, mistake: 1, blunder: 0 });
+  });
+
+  it("ignores games without a user color instead of mixing in the opponent's moves", () => {
+    const d = errorDistribution([{ gameId: 'g', reviews, replyLines: {} }]);
+    expect(Object.values(d).reduce((s, v) => s + v, 0)).toBe(0);
   });
 });

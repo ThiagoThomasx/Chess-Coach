@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import Dexie from 'dexie';
-import { ChessQuestDB, getDb, setDb } from '../src/db/database';
+import { ChessQuestDB, defineSchema, getDb, SCHEMA_VERSION, SCHEMA_VERSIONS, setDb, TABLE_NAMES } from '../src/db/database';
 import { importPgn, listGames, getGame, deleteGame, listImports, setUserColor } from '../src/db/gamesRepo';
 import { getAnalysis, saveAnalysis, recoverInterruptedAnalyses, dbEvalCache, toggleBookmark, listBookmarks } from '../src/db/analysisRepo';
 import { addExercise, recordAttempt, attemptsFor, getExercise, listSkillEvents } from '../src/db/trainingRepo';
@@ -257,4 +257,103 @@ describe('schema migration', () => {
     expect(ex?.fen).toBe(legacy.fen);
     expect(db.verno).toBe(2);
   });
+
+  it('declares every schema version explicitly, ending at SCHEMA_VERSION (Sprint 4.3)', () => {
+    expect(SCHEMA_VERSIONS.map((v) => v.version)).toEqual([1, 2]);
+    expect(SCHEMA_VERSIONS.at(-1)?.version).toBe(SCHEMA_VERSION);
+    expect(Object.keys(SCHEMA_VERSIONS[0]?.stores ?? {}).sort()).toEqual([...TABLE_NAMES].sort());
+  });
+
+  it('upgrades a v1 database with every table populated, keeping all rows (Sprint 4.3)', async () => {
+    const name = `migrate-${++n}`;
+    const v1 = new Dexie(name);
+    v1.version(1).stores(V1_STORES);
+    await v1.table('games').put({ id: 'g1', hash: 'h1', importId: 'i1', importedAt: 1 });
+    await v1.table('exercises').put({ ...exerciseFixture('g1'), kind: undefined, goal: undefined, tree: undefined });
+    await v1.table('attempts').put({ exerciseId: 'ex1', at: 2, correct: true, hintsUsed: 0, revealed: false, timeMs: 1, moves: [] });
+    await v1.table('bookmarks').put({ id: 'b1', gameId: 'g1', createdAt: 3 });
+    v1.close();
+
+    const db = new ChessQuestDB(name);
+    await db.open();
+    expect(db.verno).toBe(2);
+    expect(await db.games.count()).toBe(1);
+    expect(await db.exercises.count()).toBe(1);
+    expect(await db.attempts.count()).toBe(1);
+    expect(await db.bookmarks.count()).toBe(1);
+    expect((await db.exercises.get('ex1'))?.tree?.accepted[0]?.uci).toBe('a1a8');
+    db.close();
+  });
+
+  it('opens a v2 database created by the pre-4.3 declarations without touching its rows (Sprint 4.3)', async () => {
+    const name = `migrate-${++n}`;
+    const old = new Dexie(name);
+    old.version(2).stores(V1_STORES); // pre-4.3 code declared the full schema at version 2
+    await old.table('games').put({ id: 'g1', hash: 'h1', importId: 'i1', importedAt: 1 });
+    await old.table('exercises').put(normalizeExercise(exerciseFixture('g1')));
+    await old.table('skillEvents').put({ skill: 'tactics', at: 1, outcome: 1, weight: 1, source: 'exercise', ref: { exerciseId: 'ex1' } });
+    old.close();
+
+    const db = new ChessQuestDB(name);
+    await db.open();
+    expect(db.verno).toBe(2);
+    expect(await db.games.count()).toBe(1);
+    expect(await db.exercises.count()).toBe(1);
+    expect(await db.skillEvents.where('skill').equals('tactics').count()).toBe(1);
+    db.close();
+  });
+
+  it('a future version added to the list keeps the data of v1 and v2 databases (Sprint 4.3)', async () => {
+    const v3 = { version: 3, stores: { games: 'id, &hash, importId, importedAt, userColor' } };
+    const withV3 = (dbName: string) => {
+      const d = new Dexie(dbName);
+      defineSchema(d, [...SCHEMA_VERSIONS, v3]);
+      return d;
+    };
+
+    // From v2 (current production databases).
+    const v2name = `migrate-${++n}`;
+    const v2 = new ChessQuestDB(v2name);
+    setDb(v2);
+    await importPgn(OPERA_GAME, 'a.pgn', ['Aluno']);
+    await addExercise(exerciseFixture('g'));
+    v2.close();
+    const upgraded = withV3(v2name);
+    await upgraded.open();
+    expect(upgraded.verno).toBe(3);
+    expect(await upgraded.table('games').count()).toBe(1);
+    expect(await upgraded.table('exercises').count()).toBe(1);
+    expect(await upgraded.table('imports').count()).toBe(1);
+    upgraded.close();
+
+    // From v1 (oldest databases), straight to v3.
+    const v1name = `migrate-${++n}`;
+    const v1 = new Dexie(v1name);
+    v1.version(1).stores(V1_STORES);
+    await v1.table('games').put({ id: 'g1', hash: 'h1', importId: 'i1', importedAt: 1 });
+    await v1.table('exercises').put({ ...exerciseFixture('g1'), kind: undefined, goal: undefined, tree: undefined });
+    v1.close();
+    const fromV1 = withV3(v1name);
+    await fromV1.open();
+    expect(await fromV1.table('games').count()).toBe(1);
+    const ex = (await fromV1.table('exercises').get('ex1')) as Exercise | undefined;
+    expect(ex?.tree?.accepted[0]?.uci).toBe('a1a8');
+    fromV1.close();
+  });
 });
+
+/** The v1 schema exactly as shipped in the MVP (ef447c1). */
+const V1_STORES = {
+  games: 'id, &hash, importId, importedAt',
+  imports: 'id, importedAt',
+  analyses: 'gameId, status, updatedAt',
+  evalCache: 'key, storedAt',
+  bookmarks: 'id, gameId, createdAt',
+  exercises: 'id, gameId, theme, skill, difficulty, srs.dueAt, createdAt, source',
+  attempts: '++id, exerciseId, at',
+  skillEvents: '++id, skill, at, source, ref.gameId, ref.exerciseId',
+  repertoire: 'id, openingId, side, srs.dueAt',
+  customOpenings: 'id',
+  openingAttempts: '++id, openingId, lineId, at',
+  settings: 'id',
+};

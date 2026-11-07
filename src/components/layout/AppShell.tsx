@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { RouteErrorBoundary } from '../feedback/RouteErrorBoundary';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BarChart3, BookOpen, Crown, Gauge, Library, Settings2, Target } from 'lucide-react';
 import { useEngine } from '../../hooks/useEngine';
@@ -15,6 +16,7 @@ const ENGINE_LABEL = {
 
 export function AppShell() {
   const { engine, state } = useEngine();
+  const location = useLocation();
   const due = useLiveQuery(() => getDb().exercises.where('srs.dueAt').belowOrEqual(Date.now()).count(), [], 0);
   const links = [
     { to: '/', label: 'Dashboard', icon: <Gauge size={18} />, end: true },
@@ -52,9 +54,11 @@ export function AppShell() {
         </div>
       </aside>
       <main className="main">
-        <Suspense fallback={<div className="page muted">Carregando…</div>}>
-          <Outlet />
-        </Suspense>
+        <RouteErrorBoundary resetKey={location.pathname}>
+          <Suspense fallback={<div className="page muted">Carregando…</div>}>
+            <Outlet />
+          </Suspense>
+        </RouteErrorBoundary>
       </main>
     </div>
   );

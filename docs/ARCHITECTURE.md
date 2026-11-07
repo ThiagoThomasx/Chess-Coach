@@ -9,7 +9,7 @@
 | 5 | **Avaliações armazenadas no ponto de vista das brancas**; comparação sempre no ponto de vista de quem moveu | Elimina erros de sinal entre posições. |
 | 6 | **Uma busca por posição** (n+1 buscas por partida), reaproveitando a linha do lance jogado quando ele está no MultiPV | Metade do custo de analisar "antes e depois" separadamente, e comparações na mesma profundidade quando possível. |
 | 7 | **Persistência após cada posição** + status `paused` para análises interrompidas (inclusive aba fechada) | Retomada sem perda; partidas nunca dependem do sucesso da análise. |
-| 8 | **Dexie (IndexedDB) com repositórios** em `src/db/`, esquema versionado (`SCHEMA_VERSION`) | Acesso a dados encapsulado; `dexie-react-hooks` fornece consultas reativas na interface. |
+| 8 | **Dexie (IndexedDB) com repositórios** em `src/db/`, histórico de esquema explícito (`SCHEMA_VERSIONS`, uma entrada por versão) | Acesso a dados encapsulado; `dexie-react-hooks` fornece consultas reativas na interface. |
 | 9 | **Perfil de competências derivado de eventos** (`skillEvents`), não armazenado | Sem dados redundantes; recalculável, auditável e rastreável. Eventos de partidas são substituídos ao reanalisar (idempotente). |
 | 10 | **Classificação ≠ explicação ≠ seleção de exercícios ≠ solução** em módulos separados (`analysis/classify`, `pedagogy/`, `exercises/generate`, `exercises/validate`) | Regras testáveis isoladamente e templates fora da interface. |
 | 11 | **HashRouter** e rotas com `lazy()` | Funciona servido de qualquer pasta estática sem reescrita de URL; bundle inicial menor. |
@@ -24,9 +24,11 @@ AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
                                    ├─ terminalAnalysis | dbEvalCache | UciEngine.analyze (Worker)
                                    ├─ buildReviews → reviewMove → classifyMove
                                    └─ onProgress → db.analyses (a cada posição)
-             concluída ──▶ deriveFromAnalysis
+             concluída ──▶ deriveFromAnalysis (também ao definir a cor: changeUserColor)
                                    ├─ eventsFromGame → db.skillEvents
                                    └─ selectExercisePositions → buildExercise → db.exercises
+             analysis.derivation: 'pending' (gravado junto com a conclusão ou com a cor) → 'done' (quando
+             exercícios e evidências batem com a cor salva); App, ao abrir: reconcileDerivations refaz os 'pending'
 ExerciseSolver ── validateStep / judgeWithEngine ──▶ recordAttempt (attempts + srs + skillEvents, 1 transação)
 Dashboard/Evolução ── useLiveQuery ──▶ estimateProfile, stats, nextTraining
 ```
@@ -34,4 +36,4 @@ Dashboard/Evolução ── useLiveQuery ──▶ estimateProfile, stats, nextT
 ## Extensões previstas
 
 - **Jogar contra o computador**: novo recurso usando `UciEngine.analyze({ movetimeMs })` + `UCI_LimitStrength`; nenhuma mudança no driver.
-- **Novas versões do esquema**: adicionar `this.version(n+1).stores(...).upgrade(...)` em `db/database.ts` e incrementar `SCHEMA_VERSION` (o backup recusa versões futuras).
+- **Novas versões do esquema** (corrigido na Sprint 4.3): **acrescentar** uma entrada ao fim de `SCHEMA_VERSIONS` em `db/database.ts`, com só as tabelas que mudam e, se preciso, um `upgrade`. `SCHEMA_VERSION` acompanha a última entrada sozinho (o backup recusa versões futuras). Nunca editar nem remover uma entrada existente, e nunca mover a lista completa de tabelas para a versão nova: um banco em versão anterior passaria por uma versão sem as tabelas e perderia as linhas. Toda mudança precisa de teste de upgrade a partir de bancos v1 e v2 com dados (modelo em `tests/persistence.test.ts`, bloco "schema migration").

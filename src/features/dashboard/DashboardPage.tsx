@@ -135,9 +135,9 @@ export function DashboardPage() {
         </div>
         <div className="stat">
           <span className="stat-label">Revisões pendentes</span>
-          <span className="stat-value">{due + pendingBookmarks.length}</span>
+          <span className="stat-value" data-testid="stat-pending-reviews">{due + pendingBookmarkCount}</span>
           <span className="stat-note">
-            {due} exercício(s) · {bookmarks.filter((b) => !b.reviewedAt).length} posição(ões) marcada(s)
+            {due} exercício(s) · {pendingBookmarkCount} posição(ões) marcada(s)
           </span>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Cpu, Pause, Play, Zap } from 'lucide-react';
 import type { Game, GameAnalysis, Settings } from '../../types/domain';
-import { isRunning, startAnalysis, stopAnalysis } from '../../services/analysis/analysisRunner';
+import { derivationMessage, isRunning, startAnalysis, stopAnalysis } from '../../services/analysis/analysisRunner';
 import { useEngine } from '../../hooks/useEngine';
 import { useToast } from '../../components/feedback/Toast';
 
@@ -32,8 +32,8 @@ export function AnalysisControls({ game, analysis, settings }: Props) {
   const run = async (depth: number) => {
     setIsActive(true);
     try {
-      const r = await startAnalysis(game, settings, engine, depth);
-      if (r.status === 'complete') toast('Análise concluída. Exercícios e perfil atualizados.', 'good');
+      const { analysis: r, derivation } = await startAnalysis(game, settings, engine, depth);
+      if (r.status === 'complete') toast(derivationMessage(derivation), derivation?.hasUserColor === false ? 'info' : 'good');
       else if (r.status === 'error') toast(r.error ?? 'Falha na análise', 'bad');
       else toast('Análise pausada. Os resultados parciais foram salvos.', 'info');
     } catch (e) {
