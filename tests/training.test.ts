@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, isSacrifice, selectExercisePositions } from '../src/services/exercises/generate';
+import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, isSacrifice, selectExercisePositions, acceptsPlayedMove } from '../src/services/exercises/generate';
 import { validateStep, judgeWithEngine, hintFor, hintForNode, attemptResult, MAX_HINTS } from '../src/services/exercises/validate';
 import { exerciseOutcome } from '../src/services/adaptation/skills';
 import { nextSrs, outcomeOf, DAY_MS, RETRY_DELAY_MS } from '../src/services/scheduling/srs';
@@ -253,5 +253,20 @@ describe('the hint that names the move counts as a revealed solution (Sprint 4.4
     const fen = '6k1/5ppp/8/8/8/8/1Q6/R5K1 w - - 0 1';
     expect(hintForNode(fen, 'x', accepted, MAX_HINTS - 1).text).not.toContain('Ra7');
     expect(hintForNode(fen, 'x', accepted, MAX_HINTS).text).toContain('Ra7');
+  });
+});
+
+describe('the deeper tree overrules the analysis only when it is deeper (audit A5-1)', () => {
+  const tree = (depth: number) => ({ tree: { fen: 'x', accepted: [{ uci: 'f3d4', san: 'Nd4', score: { kind: 'cp' as const, value: 0 } }], replies: {}, depth } });
+  it('a tree deeper than the analysis that accepts the move played discards it', () => {
+    expect(acceptsPlayedMove(tree(16), 'f3d4', 11)).toBe(true);
+  });
+  it('a tree as deep as, or shallower than, the analysis does not', () => {
+    expect(acceptsPlayedMove(tree(16), 'f3d4', 16)).toBe(false);
+    expect(acceptsPlayedMove(tree(16), 'f3d4', 20)).toBe(false);
+  });
+  it('without a tree (no engine) nothing is discarded; another move accepted does not count', () => {
+    expect(acceptsPlayedMove({}, 'f3d4', 11)).toBe(false);
+    expect(acceptsPlayedMove(tree(16), 'f1c4', 11)).toBe(false);
   });
 });

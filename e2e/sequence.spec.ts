@@ -107,6 +107,8 @@ test('hint 1 is informative and solving again right after the answer is only pra
   await page.getByTestId('hint').click();
   await expect(page.getByTestId('exercise-feedback')).toContainText('O lance é Ra7');
   await expect(page.getByTestId('exercise-feedback')).toContainText('conta como solução revelada');
+  // Recorded as soon as the move is shown (audit A2-1), not when it is played.
+  await expect.poll(async () => (await readTable<{ exerciseId: string; revealed: boolean }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-retry' && a.revealed).length).toBe(1);
   await playMove(page, 'exercise-board', 'a1a7');
   await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
   await playMove(page, 'exercise-board', 'b2b8');
@@ -131,4 +133,53 @@ test('hint 1 is informative and solving again right after the answer is only pra
   expect(events.some((e) => e.independent)).toBe(false);
   const stored = (await readTable<{ id: string; srs: { box: number } }>(page, 'exercises')).find((e) => e.id === 'seq-retry');
   expect(stored?.srs.box).toBe(0);
+});
+
+test('reloading after the hint that names the move does not turn it into an independent success (audit A2-1)', async ({ page }) => {
+  await seed(page, { ...exercise, id: 'seq-reload' });
+  await page.goto('/#/train/seq-reload');
+  for (let i = 0; i < 3; i++) await page.getByTestId('hint').click();
+  await expect(page.getByTestId('exercise-feedback')).toContainText('O lance é Ra7');
+  await expect.poll(async () => (await readTable<{ exerciseId: string }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-reload').length).toBe(1);
+
+  await page.reload();
+  await playMove(page, 'exercise-board', 'a1a7');
+  await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
+  await playMove(page, 'exercise-board', 'b2b8');
+  // Solved again inside the practice window: nothing new is recorded.
+  await expect(page.getByTestId('practice-note')).toBeVisible();
+
+  const attempts = (await readTable<{ exerciseId: string; correct: boolean; revealed: boolean; hintsUsed: number }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-reload');
+  expect(attempts).toEqual([expect.objectContaining({ correct: false, revealed: true, hintsUsed: 3 })]);
+  const events = (await readTable<{ independent: boolean; outcome: number; ref: { exerciseId?: string } }>(page, 'skillEvents')).filter((e) => e.ref.exerciseId === 'seq-reload');
+  expect(events.every((e) => !e.independent && e.outcome === 0)).toBe(true);
+  const stored = (await readTable<{ id: string; srs: { box: number } }>(page, 'exercises')).find((e) => e.id === 'seq-reload');
+  expect(stored?.srs.box).toBe(0);
+});
+
+test('after the move was named, a later retry on the same screen counts as assisted (audit A2-2)', async ({ page }) => {
+  await page.clock.install();
+  await seed(page, { ...exercise, id: 'seq-later' });
+  await page.goto('/#/train/seq-later');
+  for (let i = 0; i < 3; i++) await page.getByTestId('hint').click();
+  await expect(page.getByTestId('exercise-feedback')).toContainText('O lance é Ra7');
+  await playMove(page, 'exercise-board', 'a1a7');
+  await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
+  await playMove(page, 'exercise-board', 'b2b8');
+  await expect(page.getByTestId('next-review')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Resolver de novo' }).click();
+  await expect(page.locator('#exercise-board-square-a1 [data-piece]')).toBeVisible();
+  await expect(page.locator('#exercise-board-square-a7 [data-piece]')).toHaveCount(0);
+  // Past the practice window: the new attempt is recorded, but as assisted, not independent.
+  await page.clock.fastForward('11:00');
+  await playMove(page, 'exercise-board', 'a1a7');
+  await expect(page.getByTestId('sequence-progress')).toContainText('lance 2 de 2');
+  await playMove(page, 'exercise-board', 'b2b8');
+  await expect(page.getByTestId('next-review')).toBeVisible();
+
+  const attempts = (await readTable<{ exerciseId: string; correct: boolean; revealed: boolean; hintsUsed: number }>(page, 'attempts')).filter((a) => a.exerciseId === 'seq-later');
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0]).toMatchObject({ correct: false, revealed: true });
+  expect(attempts[1]).toMatchObject({ correct: true, revealed: false, hintsUsed: 1 });
 });

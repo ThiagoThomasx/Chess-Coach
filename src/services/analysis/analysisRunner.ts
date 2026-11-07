@@ -136,8 +136,8 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     const complete = await completeExercise(ex, settings, engine);
     // Building the tree takes time: stop if the color changed (or the game was deleted) meanwhile.
     if ((await getGame(game.id))?.userColor !== game.userColor) break;
-    // The deeper search of the tree accepts the move played: it was not an error (Sprint 4.4, O1).
-    if (acceptsPlayedMove(complete, r.uci)) continue;
+    // A deeper search (the tree) accepts the move played: it was not an error (Sprint 4.4, O1; audit A5-1).
+    if (acceptsPlayedMove(complete, r.uci, before.depth)) continue;
     if ((await addExercise(complete)).added) added++;
   }
   return { hasUserColor: true, exercisesAdded: added };
