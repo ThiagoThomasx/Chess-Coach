@@ -194,3 +194,116 @@ Use outra origem que não a dos seus dados (por exemplo, o IP da máquina numa p
 8. **Dashboard:** "Seu próximo treino" é o primeiro bloco; "Mais detalhes" abre e mostra temas, aberturas e posições marcadas.
 9. **Paisagem:** gire o aparelho na tela de exercício e na de análise. Não pode haver rolagem horizontal, e o selo continua dentro da casa.
 10. **Tamanhos:** repita os itens 3 e 7 num aparelho pequeno (cerca de 360 px) e num grande (cerca de 430 px), ou num tablet.
+
+## 10. Fechamento da validação (PR #3)
+
+### 10.1 Estado no GitHub (consultado diretamente, 2026-11-07)
+
+| PR | Head → base | SHA | Mergeability | Comentários / reviews |
+|---|---|---|---|---|
+| #1 | `fix/sprint3-phase1` → `main` | `055f6e1` | MERGEABLE / CLEAN | 0 / 0 |
+| #2 | `feat/sprint4-1-adaptive-training` → `fix/sprint3-phase1` | `38bd527` | MERGEABLE / CLEAN | 0 / 0 |
+| #3 | `feat/sprint4-2-clarity-badges-pgn-paste` → `feat/sprint4-1-adaptive-training` | `acdb610` | MERGEABLE / CLEAN | 0 / 0 (nem comentários de linha) |
+
+"MERGEABLE / CLEAN" quer dizer apenas que não há conflitos. Nenhum PR foi aprovado em review nem integrado.
+
+### 10.2 CI no código auditado
+
+- **Commit:** `acdb610`, run `42337471307` (evento `pull_request`), check `verify`: **sucesso**.
+- **O que rodou:** typecheck, Vitest **322** (dos quais **21** com Stockfish real), build e Playwright **47**.
+- **Este relatório:** o commit que traz esta seção altera só este arquivo. O CI desse commit deve ser conferido no PR, e o código auditado continua sendo `acdb610`.
+
+### 10.3 Testes locais
+
+Executados sobre o mesmo conteúdo de `acdb610`, na rodada 4.2.1:
+
+| Verificação | Resultado |
+|---|---|
+| typecheck | ok |
+| Vitest | 322 |
+| Stockfish real | 21 |
+| build | ok |
+| Playwright | 47 |
+| Larguras 390 / 430 / 768 / 1280 px | ok (§8.2) |
+
+Nenhum código mudou depois disso, por isso não houve nova execução.
+
+### 10.4 Revisão final de escopo e integridade
+
+Diferença `38bd527..acdb610`: 25 arquivos.
+
+- **Sem alteração:**
+  - `package.json` e lockfile;
+  - `src/db/database.ts` (esquema v2, sem migração);
+  - `src/services/engine`, `public/` (WASM do Stockfish) e `scripts/`;
+  - `src/services/backup`;
+  - `.github/` e `vite.config.ts`.
+- **Banco de dados:** a única mudança em `src/db` é aditiva (`importPastedPgn` em `gamesRepo.ts`), e ela chama `importPgn`, o mesmo fluxo da importação por arquivo.
+- **Rede:** nenhuma chamada de rede foi adicionada (nenhum `fetch`, `XMLHttpRequest`, `WebSocket`, `sendBeacon` ou URL).
+- **Gravações:** nenhuma gravação nova no IndexedDB.
+  - Os selos são calculados na tela e não alteram `MoveReview.classification`.
+  - A classe do lance no exercício não é gravada, e `recordAttempt` recebe os mesmos campos de antes.
+- **Contador:** "Mais detalhes" usa a contagem completa das posições pendentes (teste E2E de regressão).
+- **Regressões:** os fluxos de análise, exercícios, sessão guiada e dashboard continuam cobertos pela bateria Playwright existente, e ela passou.
+
+### 10.5 Teste em celular físico: checklist
+
+**Situação:** pendente, como pendência externa (depende do aparelho do usuário). Não há evidência de execução, então não está aprovado.
+
+Preparação: conecte o celular à mesma rede, rode `npm run build` e depois `npm run preview -- --host --port 4180`, e abra `http://<IP-da-máquina>:4180`. Use essa origem separada para não mexer nos dados de `localhost:5173`. Para cada item, marque ✅ ou ❌ e anote aparelho, navegador e observações.
+
+1. **Abertura**
+   - [ ] O app abre sem tela branca e a barra de navegação inferior responde ao toque.
+2. **Badges no tabuleiro**
+   - [ ] Num exercício resolvido, o selo ★ aparece no canto superior direito da casa de destino, legível sem zoom e sem esconder a peça.
+   - [ ] Num erro, aparecem ?! / ? / ?? com a cor correspondente.
+3. **Casas e peças**
+   - [ ] Tocar na peça e depois na casa move a peça.
+   - [ ] Arrastar também funciona.
+   - [ ] O selo não bloqueia o toque na casa.
+4. **Tela de exercícios**
+   - [ ] O cartão de tarefa fica acima do tabuleiro e mostra título, objetivo e próxima ação.
+   - [ ] Em cada estado há no máximo um botão dourado.
+   - [ ] "Origem e histórico" abre e fecha com um toque.
+5. **Lado que joga**
+   - [ ] Num exercício das Pretas, o título diz "Pretas jogam", o tabuleiro aparece do lado das Pretas e a legenda confirma.
+   - [ ] O último lance do adversário fica destacado quando a partida de origem existe.
+6. **Análise**
+   - [ ] Ao avançar até um erro, o selo e a faixa ("3. Nd4 · ?? Erro grave · seta verde: melhor era …") correspondem ao lance exibido e à classificação da lista.
+   - [ ] Numa variante, a faixa avisa "Explorando uma variante" e o selo some.
+7. **Colar PGN**
+   - [ ] Em Partidas, colar uma partida de outro app e tocar em "Importar texto" mostra "Texto colado · 1 importada(s)" e limpa a caixa.
+8. **PGN inválido e duplicado**
+   - [ ] Colar a mesma partida de novo mostra "1 duplicada(s)".
+   - [ ] Colar texto inválido mostra "com erro" e mantém o texto na caixa.
+   - [ ] Com a caixa vazia, o botão fica desativado.
+9. **Orientação**
+   - [ ] Girar para paisagem e voltar para retrato no exercício e na análise não gera rolagem horizontal e mantém o selo dentro da casa.
+10. **Legibilidade, rolagem e toque**
+    - [ ] Os textos são legíveis sem zoom.
+    - [ ] Com o teclado virtual aberto sobre a caixa de PGN, o botão "Importar texto" continua alcançável.
+    - [ ] Botões e resumos recolhíveis são fáceis de tocar (alvos de 44 px).
+
+O roteiro detalhado continua na §9.
+
+### 10.6 Débitos técnicos (registrados, não corrigidos)
+
+| Item | Classificação | Justificativa |
+|---|---|---|
+| O cartão "Revisões pendentes" soma `due + pendingBookmarks.length`, e essa lista é limitada a 5 posições marcadas | Não bloqueador · débito técnico futuro | Existe desde antes da Sprint 4.2 e não foi tocado por este PR. O texto de apoio do mesmo cartão já mostra a contagem completa. A correção é simples e cabe numa tarefa própria. |
+| O exercício classifica o lance com os limites **atuais** das configurações; análises gravadas usaram os limites da época | Não bloqueador · débito técnico futuro | Os dois casos usam a mesma função (`classifyMove`). Só diverge se o usuário mudar os limites depois de analisar, e o selo do exercício não é gravado. Se for desejado, gravar os limites na análise exigiria mudança de dados e, portanto, decisão do usuário. |
+| Em 768 px (tablet em retrato) o tabuleiro ocupa toda a largura, e o painel de ações começa abaixo da dobra | Não bloqueador · débito técnico futuro | Ainda se aplica. O comportamento é anterior à Sprint 4.2 (a coluna única até 1000 px já existia). O cartão de tarefa fica acima do tabuleiro, então o objetivo continua visível. Pede um ajuste de layout próprio para tablet. |
+| No caminho de reserva `measureAfter`, um mate equivalente pode receber "excelente" em vez de "melhor" | Não bloqueador · débito técnico futuro | Subavalia o lance e nunca cria um erro. Só ocorre quando a busca comparável não devolve a linha do lance. |
+
+Nenhum item é bloqueador.
+
+### 10.7 Veredito
+
+**Aprovado tecnicamente, com pendências.**
+
+- O código em `acdb610` passou no CI e localmente, e a revisão de escopo e integridade não encontrou desvios.
+- Pendências antes do merge:
+  1. o teste em celular físico (§10.5);
+  2. o CI verde no commit que traz esta seção do relatório;
+  3. a integração do PR #2 (o PR #3 está empilhado nele).
+- **Próxima ação recomendada:** executar o checklist da §10.5 num aparelho físico. Depois, integrar o PR #2 e trocar a base do PR #3 para `fix/sprint3-phase1` antes do merge.
