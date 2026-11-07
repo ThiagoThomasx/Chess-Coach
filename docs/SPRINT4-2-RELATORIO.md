@@ -248,7 +248,18 @@ Diferença `38bd527..acdb610`: 25 arquivos.
 
 ### 10.5 Teste em celular físico: checklist
 
-**Situação:** pendente, como pendência externa (depende do aparelho do usuário). Não há evidência de execução, então não está aprovado.
+**Situação (atualizada em 2026-11-07):** teste físico confirmado pelo usuário.
+
+| Campo | Registro |
+|---|---|
+| Execução | O usuário confirmou que executou o teste em aparelho físico e que os itens testados funcionaram corretamente |
+| Aparelho e sistema operacional | Não informados |
+| Navegador e versão | Não informados |
+| Abrangência | Não especificada entre os roteiros das Sprints 3.1 (§6 de `SPRINT3-1-RELATORIO.md`), 4.1 e 4.2 (esta seção) |
+| Origem usada | Build de `5adbc9f` servido em `http://192.168.0.4:4180` (origem separada dos dados de `localhost:5173`) |
+| Resultado | Teste físico confirmado pelo usuário, sem dados técnicos adicionais para rastreabilidade |
+
+Este registro não afirma que cada item abaixo, nem cada roteiro das três sprints, foi executado individualmente. As caixas ficam desmarcadas porque não houve marcação item a item.
 
 Preparação: conecte o celular à mesma rede, rode `npm run build` e depois `npm run preview -- --host --port 4180`, e abra `http://<IP-da-máquina>:4180`. Use essa origem separada para não mexer nos dados de `localhost:5173`. Para cada item, marque ✅ ou ❌ e anote aparelho, navegador e observações.
 
@@ -302,8 +313,25 @@ Nenhum item é bloqueador.
 **Aprovado tecnicamente, com pendências.**
 
 - O código em `acdb610` passou no CI e localmente, e a revisão de escopo e integridade não encontrou desvios.
-- Pendências antes do merge:
-  1. o teste em celular físico (§10.5);
-  2. o CI verde no commit que traz esta seção do relatório;
-  3. a integração do PR #2 (o PR #3 está empilhado nele).
-- **Próxima ação recomendada:** executar o checklist da §10.5 num aparelho físico. Depois, integrar o PR #2 e trocar a base do PR #3 para `fix/sprint3-phase1` antes do merge.
+- Pendências resolvidas:
+  1. o teste em celular físico, confirmado pelo usuário (§10.5), sem dados de aparelho e navegador;
+  2. o CI verde em `5adbc9f`, o commit que trouxe esta seção (run `42337795216`).
+- Pendência restante: a integração em sequência, porque o PR #3 está empilhado no PR #2, que está empilhado no PR #1.
+
+#### Sequência de integração (corrigida)
+
+Estado das branches em 2026-11-07: a pilha é linear. `main` (`9c964de`) é a base comum, e cada PR está 0 commits atrás da sua base. A simulação da pilha inteira sobre `main` não teve conflitos. O destino final dos três PRs é `main`, e não `fix/sprint3-phase1`.
+
+1. **PR #1:** integrar `fix/sprint3-phase1` em `main`.
+2. **PR #2:** depois que o PR #1 entrar em `main`, trocar a base do PR #2 para `main`, atualizar a branch, resolver eventuais conflitos e validar de novo.
+3. Integrar o PR #2 em `main` depois de CI verde e revisão final.
+4. **PR #3:** depois que o PR #2 entrar em `main`, trocar a base do PR #3 para `main`, atualizar a branch, resolver eventuais conflitos e validar de novo.
+5. Integrar o PR #3 em `main` depois de CI verde e revisão final.
+
+Cuidados:
+
+- **Modo de merge:** usar "Create a merge commit". Squash ou rebase criam SHAs novos, e o PR seguinte passaria a carregar os commits originais duplicados.
+- **CI depois da troca de base:** a troca de base não dispara o workflow sozinha (gatilhos: `pull_request` opened/synchronize/reopened e `push` em `main`). Atualizar a branch com um commit de merge dispara o CI contra `main`.
+- **Branch padrão:** a branch padrão do repositório hoje é `fix/sprint3-phase1`. Não apagá-la nem mudar a padrão antes de o PR #2 ter a base trocada para `main`.
+
+- **Próxima ação:** com autorização explícita, integrar o PR #1 em `main` com merge commit.
