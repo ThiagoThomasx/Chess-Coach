@@ -328,3 +328,37 @@ describe('the recent window is a time window (audit AI-1)', () => {
     expect(s.confidence).toBe('needs_review');
   });
 });
+
+describe('old evidence does not ask for review through the weak bound either (final audit FA-1)', () => {
+  const T = 3000 * DAY_MS;
+  const x = (ageDays: number, outcome: number, id: string, i = 0): SkillEvent => ({ skill: 'tactics', at: T - ageDays * DAY_MS - i * 1000, outcome, weight: 1, independent: outcome === 1, difficulty: 2, source: 'exercise', ref: { exerciseId: id } });
+  const g = (ageDays: number, outcome: number, i: number): SkillEvent => ({ skill: 'tactics', at: T - ageDays * DAY_MS - i * 1000, outcome, weight: 0.3, independent: true, source: 'game', ref: { gameId: `g${i}`, ply: 1 } });
+  const oldFailures = (ageDays: number) => Array.from({ length: 20 }, (_, i) => x(ageDays, 0, `f${i}`, i));
+  const review = (events: SkillEvent[]) => nextTraining({ profile: estimateProfile(events, T), games: [{ gameId: 'z', userColor: 'w', reviews: [], replyLines: {} }], dueReviews: 0, totalGames: 1 });
+
+  it.each([35, 90, 200])('failures %i days old plus one solved exercise today: no "needs review", no review recommendation', (age) => {
+    const events = [...oldFailures(age), x(0, 1, 'today')];
+    const s = estimateSkill('tactics', events, T);
+    expect(s.confidence).not.toBe('needs_review');
+    expect(s.history?.level).toBeLessThan(0.2); // the historical diagnosis still shows the weakness
+    expect(review(events).title).not.toContain('Revisar');
+  });
+
+  it('one recent game move after old failures does not ask for review', () => {
+    expect(estimateSkill('tactics', [...oldFailures(35), g(0, 1, 1)], T).confidence).not.toBe('needs_review');
+  });
+
+  it('solving one exercise does not turn "no recent evidence" into "needs review"', () => {
+    expect(estimateSkill('tactics', oldFailures(35), T).confidence).toBe('no_recent');
+    expect(estimateSkill('tactics', [...oldFailures(35), x(0, 1, 'today')], T).confidence).not.toBe('needs_review');
+  });
+
+  it('enough recent evidence below 50% still asks for review, of any kind', () => {
+    const recentExercises = Array.from({ length: 8 }, (_, i) => x(i, 0, `r${i}`));
+    expect(estimateSkill('tactics', recentExercises, T).confidence).toBe('needs_review');
+    // Old exercises plus many recent game errors: the recent sample is the game moves.
+    const oldGood = Array.from({ length: 6 }, (_, i) => x(300, 1, `o${i}`, i));
+    const recentGames = Array.from({ length: 30 }, (_, i) => g(i % 10, 0, i));
+    expect(estimateSkill('tactics', [...oldGood, ...recentGames], T).confidence).toBe('needs_review');
+  });
+});

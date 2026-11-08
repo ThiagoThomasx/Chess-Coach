@@ -224,7 +224,7 @@ Falta de dados recentes não é falta de habilidade: um jogador que só importou
 |---|---|
 | Sem evidência recente | última evidência há > 30 dias, com ≥ 2 de peso bruto (com menos, "evidências insuficientes"). Avaliado antes dos demais |
 | Evidências insuficientes | peso efetivo < 2 |
-| Precisa revisar | taxa recente (eventos **do mesmo tipo** nos **últimos 30 dias**, no máximo os 8 mais novos e no mínimo 4, ver Tendência) 20 p.p. abaixo da taxa desse tipo; **ou limite superior do intervalo de 90% < 50%** (claramente abaixo de 50%, mesmo sem queda recente) |
+| Precisa revisar | taxa recente (eventos **do mesmo tipo** nos **últimos 30 dias**, no máximo os 8 mais novos e no mínimo 4, ver Tendência) 20 p.p. abaixo da taxa desse tipo; **ou limite superior do intervalo de 90% < 50%** (claramente abaixo de 50%, mesmo sem queda recente), **desde que haja pelo menos 4 evidências de qualquer tipo nos últimos 30 dias** (auditoria final da 4.5, FA-1). Sem essa amostra recente, erros de semanas ou meses atrás não pedem revisão: uma única evidência recente não troca "Sem evidência recente" por "Precisa revisar", e o diagnóstico histórico continua mostrando a fraqueza |
 | Consolidada (provisório) | peso ≥ 10, média ≥ 75%, limite inferior ≥ 60% **e** acertos independentes em ≥ 5 exercícios distintos, **dos quais ≥ 2 com dificuldade ≥ 3** (capturas triviais sozinhas não consolidam) |
 | Em desenvolvimento | demais casos ("evidências iniciais" quando o peso é < 6) |
 
