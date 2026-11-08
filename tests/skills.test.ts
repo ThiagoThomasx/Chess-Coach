@@ -362,3 +362,32 @@ describe('old evidence does not ask for review through the weak bound either (fi
     expect(estimateSkill('tactics', [...oldGood, ...recentGames], T).confidence).toBe('needs_review');
   });
 });
+
+describe('the weak bound is measured on recent evidence (final audit FA-7)', () => {
+  const T = 3000 * DAY_MS;
+  let k = 0;
+  const x = (ageDays: number, outcome: number): SkillEvent => ({ skill: 'tactics', at: T - ageDays * DAY_MS - ++k * 1000, outcome, weight: 1, independent: outcome === 1, difficulty: 2, source: 'exercise', ref: { exerciseId: `q${k}` } });
+  const rep = (n: number, age: number, outcome: number) => Array.from({ length: n }, () => x(age, outcome));
+  const rec = (events: SkillEvent[]) => nextTraining({ profile: estimateProfile(events, T), games: [{ gameId: 'z', userColor: 'w', reviews: [], replyLines: {} }], dueReviews: 0, totalGames: 1 });
+
+  it.each([
+    [20, 60, 4],
+    [40, 90, 8],
+  ])('%i failures %i days old plus %i recent successes: no "needs review", no review recommendation', (old, age, recent) => {
+    const events = [...rep(old, age, 0), ...rep(recent, 2, 1)];
+    const s = estimateSkill('tactics', events, T);
+    expect(s.recentRate).toBe(1);
+    expect(s.confidence).not.toBe('needs_review');
+    expect(s.history?.level).toBeLessThan(0.35); // the historical diagnosis still shows the old weakness
+    expect(rec(events).title).not.toContain('Revisar');
+  });
+
+  it('recent failures after old successes still ask for review', () => {
+    expect(estimateSkill('tactics', [...rep(20, 60, 1), ...rep(6, 2, 0)], T).confidence).toBe('needs_review');
+  });
+
+  it('a recent sample clearly below 50% asks for review even without a drop', () => {
+    const s = estimateSkill('tactics', [...rep(20, 60, 0), ...rep(5, 2, 0), ...rep(1, 1, 1)], T);
+    expect(s.confidence).toBe('needs_review');
+  });
+});

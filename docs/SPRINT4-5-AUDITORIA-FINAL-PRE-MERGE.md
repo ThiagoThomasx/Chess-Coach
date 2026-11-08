@@ -386,3 +386,29 @@ Componentes: dashboard (`SkillStates`), Evolução (`SkillProfile`) e recomenda�
 - Nenhum P0 ou P1. Resta **um P2 aberto (FA-7)**, que impede o veredito APROVADO pelo critério "nenhum P0, P1 ou P2 aberto". FA-7 afeta só diagnóstico e recomendação, já existia antes do PR e está documentado.
 - **Decisão a explicitar pelo usuário**: aceitar FA-7 como ressalva e corrigi-lo depois do merge, ou corrigi-lo antes. Recomendo corrigir antes do merge, porque é uma mudança pequena no mesmo ponto do código e na mesma regra de produto.
 - CI: `verify` **SUCCESS** em `d474223`. O commit documental com este relatório dispara uma nova execução, cujo resultado consta do relatório final ao usuário.
+
+### 13.10 FA-7 — Correção (depois de `8dea279`)
+
+A pedido do usuário, o FA-7 foi corrigido na mesma branch. No momento deste registro, a correção ainda não tem commit.
+
+- **Alteração** (`src/services/adaptation/skills.ts`, em `estimateSkill`): o limite fraco ("limite superior do intervalo de 90% < 50%") é medido sobre o posterior **só das evidências dos últimos 30 dias**, de qualquer tipo, com 1/k para repetições contado sobre todo o histórico, sem decaimento. Antes, ele usava o posterior decaído de todas as evidências. Continua exigindo ≥ 4 evidências nessa janela (FA-1). Queda recente, diagnóstico histórico, taxa recente, tendência, `no_recent` e consolidação ficam inalterados.
+- **Testes** (`tests/skills.test.ts`, bloco "final audit FA-7", 4 casos, escritos antes da correção):
+  - 20 erros há 60 dias + 4 acertos recentes, e 40 erros há 90 dias + 8 acertos recentes: não `needs_review`, taxa recente de 100%, histórico abaixo de 35% e recomendação sem "Revisar". Os dois **falharam antes** da correção (RED).
+  - Dois guardas, que passavam antes e continuam passando: acertos antigos + erros recentes continuam pedindo revisão (queda real); e uma amostra recente claramente abaixo de 50% (5 erros + 1 acerto) pede revisão mesmo sem queda.
+  - Os seis testes do FA-1 continuam passando, inclusive o guarda com 30 lances de partida errados recentes.
+- **Sondas** (mesmos cenários da 13.6): **E** e **E3** passam a dar `consistent` ("Em desenvolvimento") e "Ampliar o diagnóstico". A, B, B2, C, C2, D, E2, E4 e F ficam com o mesmo resultado de antes (B, C, C2 e F continuam pedindo revisão).
+- **Suíte**:
+
+  | Verificação | Resultado |
+  |---|---:|
+  | Typecheck | ok |
+  | Vitest | **401** (397 + 4) |
+  | Stockfish real | **23** |
+  | Playwright, com build de produção | **59** |
+  | Cobertura de linhas | **93,77%** (2004/2137) |
+  | Cobertura de branches | **83,09%** (1823/2194) |
+  | Statements / funções | 90,30% / 87,22% |
+
+- **Metodologia**: a linha "Precisa revisar" da tabela de estados em `docs/METHODOLOGY.md` passa a dizer que o limite é medido só sobre as evidências dos últimos 30 dias.
+
+**Situação**: FA-1 e FA-7 estão corrigidos, e não há P0, P1 nem P2 aberto. Restam FA-2 a FA-6 (P3). Pelos critérios desta auditoria, o veredito passa a **APROVADO COM RESSALVAS** (apenas P3). Esse veredito ainda depende de duas coisas: o commit desta correção e a CI verde no novo SHA.

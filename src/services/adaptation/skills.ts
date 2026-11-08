@@ -255,8 +255,13 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   // "Clearly below 50%" asks for review only with a recent sample (any kind, at least MIN_RECENT in the
   // last STALE_DAYS): otherwise one recent event would turn weeks- or months-old failures into "needs
   // review", and solving one exercise would switch "no recent evidence" to "needs review" (audit FA-1).
-  const recentSample = events.filter((e) => now - e.at <= STALE_DAYS * DAY_MS).length >= MIN_RECENT;
-  const weak = recentSample && interval[1] < WEAK_UPPER_BOUND;
+  // The bound is measured on that recent evidence alone (any kind, 1/k for repeats, no decay): with a
+  // good recent sample, old failures do not ask for review either (audit FA-7).
+  const allWeights = effectiveWeights(events, now, false);
+  const inRecent = events.map((e) => now - e.at <= STALE_DAYS * DAY_MS);
+  const recentEvents = events.filter((_, i) => inRecent[i]);
+  const recentSample = recentEvents.length >= MIN_RECENT;
+  const weak = recentSample && posterior(recentEvents, allWeights.filter((_, i) => inRecent[i])).interval[1] < WEAK_UPPER_BOUND;
   let confidence: ConfidenceLevel;
   if (stale) confidence = rawEvidence >= 2 ? 'no_recent' : 'insufficient';
   else if (evidence < 2) confidence = 'insufficient';
