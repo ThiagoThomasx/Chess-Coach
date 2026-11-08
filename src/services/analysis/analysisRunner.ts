@@ -138,7 +138,10 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     if ((await getGame(game.id))?.userColor !== game.userColor) break;
     // A deeper search (the tree) accepts the move played: it was not an error (Sprint 4.4, O1; audit A5-1).
     if (acceptsPlayedMove(complete, r.uci, before.depth)) continue;
-    if ((await addExercise(complete)).added) added++;
+    // The color is checked again in the write's own transaction: a switch cannot land in between (Sprint 4.5, C1).
+    const saved = await addExercise(complete, { gameId: game.id, color: game.userColor });
+    if (saved.colorChanged) break;
+    if (saved.added) added++;
   }
   return { hasUserColor: true, exercisesAdded: added };
 }
@@ -236,7 +239,7 @@ async function saveColorMarkingPending(gameId: string, color: Color | undefined)
 /** Deletes the game's exercises for `side` that have no attempt (so no evidence either). Runs inside the caller's transaction. */
 async function removeUnattemptedExercises(gameId: string, side: Color): Promise<number> {
   const db = getDb();
-  const candidates = await db.exercises.filter((e) => e.gameId === gameId && e.sideToMove === side).toArray();
+  const candidates = await db.exercises.where('gameId').equals(gameId).filter((e) => e.sideToMove === side).toArray();
   const unattempted: string[] = [];
   for (const ex of candidates) if ((await db.attempts.where('exerciseId').equals(ex.id).count()) === 0) unattempted.push(ex.id);
   await db.exercises.bulkDelete(unattempted);

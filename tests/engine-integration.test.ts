@@ -1,4 +1,5 @@
 // Runs the real Stockfish 19 WASM build (the same file the app serves) in Node.
+import 'fake-indexeddb/auto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -12,8 +13,14 @@ import { DEFAULT_THRESHOLDS } from '../src/services/analysis/classify';
 import { buildSolutionTree, goalFor, playSolverMove } from '../src/services/exercises/sequence';
 import type { Exercise, ExerciseGoal, SolutionNode } from '../src/types/domain';
 import { parsePgnText } from '../src/services/pgn/parsePgn';
-import { SHORT_BLUNDER_GAME } from './fixtures';
+import { OPERA_GAME, SHORT_BLUNDER_GAME } from './fixtures';
+import { acceptsPlayedMove, buildExercise, withSolutionTree } from '../src/services/exercises/generate';
 import { judgeOffBook, validateLine } from '../src/services/openings/practice';
+import { ChessQuestDB, getDb, setDb } from '../src/db/database';
+import { getGame, importPgn, setUserColor } from '../src/db/gamesRepo';
+import { DEFAULT_SETTINGS } from '../src/db/settings';
+import { deriveFromAnalysis } from '../src/services/analysis/analysisRunner';
+import type { GameAnalysis } from '../src/types/domain';
 
 const BRIDGE = fileURLToPath(new URL('./support/sf-bridge.cjs', import.meta.url));
 
@@ -241,4 +248,51 @@ describe('opening deviations (audit M3, real engine)', () => {
     const italian = validateLine(['e4', 'e5']).fens[2]!;
     expect((await judgeOffBook(engine, italian, 'f1a6', 5)).playable).toBe(false);
   }, 120_000);
+});
+
+describe('quick-analysis false errors are discarded by the deeper tree (Sprint 4.5, P3-2; O1 reference case)', () => {
+  // Opera game, 15.Bxd7+ (ply 29), a winning move. The depth-11 search below is frozen from the real
+  // engine (identical in two fresh processes; Sprint 4.5 audit): it makes the app classify the move as a
+  // blunder. Freezing it keeps that precondition deterministic; only the deeper tree uses the live engine.
+  const plies = replayGame(parsePgnText(OPERA_GAME).games[0]!.moves);
+  const ply = plies[28]!; // 15.Bxd7+
+  const line = (multipv: number, value: number, pv: string[]) => ({ multipv, score: { kind: 'cp' as const, value }, pv, depth: 11 });
+  const before = { fen: ply.fenBefore, depth: 11, multiPv: 3, complete: true, timeMs: 0, lines: [line(1, 812, ['g5f6']), line(2, 523, ['b3e6']), line(3, 342, ['c1b1'])] };
+  const after = { fen: ply.fenAfter, depth: 11, multiPv: 3, complete: true, timeMs: 0, lines: [line(1, 261, ['f6d7', 'b3b7', 'f7f6']), line(2, 1019, ['e6d7', 'd1d7', 'e8d7']), line(3, 2613, ['e8e7', 'b3a3', 'e7d8'])] };
+
+  it('a "blunder" at depth 11 that the depth-16 tree accepts gives no exercise', async () => {
+    expect(ply.san).toBe('Bxd7+');
+    const review = reviewMove(ply, before, after)!;
+    expect(review.classification).toBe('blunder'); // the frozen quick analysis calls it a blunder
+    const game = { ...parsePgnText(OPERA_GAME).games[0]!, id: 'opera', importId: 'i', importedAt: Date.now(), warnings: [], userColor: 'w' as const };
+    const ex = buildExercise({ game, review, before, replyLine: after.lines[0]!.pv });
+    expect(ex).not.toBeNull();
+
+    const full = await withSolutionTree(ex!, engine, { depth: 16, multiPv: 3, tolerance: 5 });
+
+    expect(full.tree?.depth).toBeGreaterThanOrEqual(16);
+    expect(full.tree?.accepted.map((m) => m.uci)).toContain('b5d7');
+    expect(acceptsPlayedMove(full, review.uci, before.depth)).toBe(true);
+    // The same tree does not overrule an analysis as deep as itself (audit A5-1).
+    expect(acceptsPlayedMove(full, review.uci, full.tree!.depth)).toBe(false);
+  }, 180_000);
+
+  it('the integrated derivation creates no exercise for 15.Bxd7+ (audit AI-3)', async () => {
+    setDb(new ChessQuestDB('opera-derivation'));
+    const r = await importPgn(OPERA_GAME, 'opera.pgn', []);
+    const id = r.imported[0]!.id;
+    await setUserColor(id, 'w');
+    const game = (await getGame(id))!;
+    const review = reviewMove(ply, before, after)!;
+    // Only this position is analysed: the frozen depth-11 search before and after 15.Bxd7+.
+    const positions: GameAnalysis['positions'] = Array.from({ length: game.moves.length + 1 }, () => null);
+    positions[28] = before;
+    positions[29] = after;
+    const analysis: GameAnalysis = { gameId: id, status: 'complete', settings: { depth: 11, multiPv: 3 }, positions, reviews: [review], startedAt: 0, updatedAt: 0 };
+
+    const d = await deriveFromAnalysis(game, analysis, { ...DEFAULT_SETTINGS, analysisDepth: 16 }, engine);
+
+    expect(d).toEqual({ hasUserColor: true, exercisesAdded: 0 });
+    expect(await getDb().exercises.where('gameId').equals(id).count()).toBe(0);
+  }, 180_000);
 });

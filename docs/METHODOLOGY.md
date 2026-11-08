@@ -207,23 +207,32 @@ Competências: visão tática, cálculo, identificação de ameaças, defesa, es
 - Decaimento por idade com meia-vida de 120 dias (o perfil acompanha o desempenho recente). A idade de uma evidência de partida é contada **da data em que a partida foi jogada** (data do PGN; sem data confiável, a data de importação), e não da análise (Sprint 4.4): analisar hoje uma partida de um ano atrás não torna os erros dela recentes, e reanalisar não muda a data. As evidências gravadas antes disso são redatadas ao abrir o app (só o campo `at` dos eventos de partida).
 - Tentativas repetidas do **mesmo exercício** valem 1/k (k = ordem da tentativa): resolver 15 vezes a mesma posição soma ≈ 3,3, não 15.
 - Uma partida contribui com no máximo peso 1 por competência (uma partida tem poucos exemplos de cada tema).
+- **Exclusões** (Sprint 4.5): excluir uma partida remove também as evidências das tentativas nos exercícios dela, como já fazia a exclusão de um exercício. Evidências de exercícios que não existem mais (deixadas por exclusões de partidas antes da 4.5) são removidas ao abrir o app (decisão D-5). Evidências de partidas e de aberturas nunca são tocadas por essa limpeza. Um backup restaurado sem a tabela de exercícios (arquivo editado à mão) tem as evidências de exercício tratadas da mesma forma, porque elas apontam para exercícios que não existem no banco.
 - Evidência de partida só é registrada a partir de conceitos **verificados** (§4.3) e de ameaças "en prise" reais (lances legais + SEE).
 - Nenhuma evidência **positiva** (nem de fase) vem de um lance sem escolha real: único lance legal, ou posição em que o adversário já tinha mate forçado antes do lance.
 
-**Estado da competência** (quatro estados mostrados ao jogador):
+**Diagnóstico histórico e evolução recente** (Sprint 4.5, decisão D-4 B). O perfil responde a duas perguntas diferentes:
+
+- **Evolução recente**: a estimativa principal, com o decaimento acima. É o que move estado, tendência e dificuldade-alvo.
+- **Diagnóstico histórico**: a mesma estimativa Beta com **todas** as evidências, partidas antigas incluídas, **sem decaimento** (o 1/k por repetição continua). É mostrado com o período coberto ("Diagnóstico histórico: 40% (…) · 60 evidência(s) de 01/2025 a 03/2025") e serve de ponto de partida para quem importa histórico.
+
+Falta de dados recentes não é falta de habilidade: um jogador que só importou partidas antigas vê "Sem evidência recente" e o diagnóstico histórico, e não "Precisa revisar".
+
+**Estado da competência** (cinco estados mostrados ao jogador):
 
 | Estado | Regra |
 |---|---|
+| Sem evidência recente | última evidência há > 30 dias, com ≥ 2 de peso bruto (com menos, "evidências insuficientes"). Avaliado antes dos demais |
 | Evidências insuficientes | peso efetivo < 2 |
-| Precisa revisar | última evidência há > 30 dias (com ≥ 6 de peso bruto); taxa recente (últimos 8 eventos) 20 p.p. abaixo da média; **ou limite superior do intervalo de 90% < 50%** (claramente abaixo de 50%, mesmo sem queda recente) |
+| Precisa revisar | taxa recente (eventos **do mesmo tipo** nos **últimos 30 dias**, no máximo os 8 mais novos e no mínimo 4, ver Tendência) 20 p.p. abaixo da taxa desse tipo; **ou limite superior do intervalo de 90% < 50%** (claramente abaixo de 50%, mesmo sem queda recente), **medido só sobre as evidências dos últimos 30 dias** (qualquer tipo, repetições com peso 1/k, sem decaimento) **e desde que sejam pelo menos 4** (auditoria final da 4.5, FA-1 e FA-7). Erros de semanas ou meses atrás não pedem revisão: nem com uma única evidência recente (que não troca "Sem evidência recente" por "Precisa revisar"), nem com uma amostra recente boa (quem acertou os exercícios recentes não é mandado revisar por erros antigos). O diagnóstico histórico continua mostrando a fraqueza antiga |
 | Consolidada (provisório) | peso ≥ 10, média ≥ 75%, limite inferior ≥ 60% **e** acertos independentes em ≥ 5 exercícios distintos, **dos quais ≥ 2 com dificuldade ≥ 3** (capturas triviais sozinhas não consolidam) |
 | Em desenvolvimento | demais casos ("evidências iniciais" quando o peso é < 6) |
 
 Antes, uma competência com muitas evidências e taxa baixa aparecia como "desempenho consistente", o que soava positivo.
 
-**Exibição**: com poucas evidências, o perfil mostra só o intervalo ("entre X% e Y%"), sem o número central.
+**Exibição**: com poucas evidências, ou só com evidências antigas ("sem evidência recente"), o perfil mostra só o intervalo da evolução recente ("entre X% e Y%"), sem o número central; o diagnóstico histórico mostra o número quando tem peso ≥ 2.
 
-**Tendência**: compara os últimos 8 eventos com os 8 anteriores (≥ 4); diferença > 10 p.p. → subindo/caindo.
+**Tendência**: compara os eventos recentes com os 8 anteriores a eles (≥ 4); diferença > 10 p.p. → subindo/caindo. **"Recente" é uma janela de tempo** (auditoria independente da 4.5, AI-1): só entram eventos dos últimos 30 dias, no máximo os 8 mais novos, e são necessários pelo menos 4. Abaixo disso não há taxa recente, tendência nem "Precisa revisar" por queda. Antes, uma única evidência recente fazia eventos de semanas ou de um ano contarem como "recentes". A linha de base da comparação pode ser mais antiga, porque a tendência compara agora com antes. A comparação usa **um só tipo de evidência** (Sprint 4.5): as medições diretas (exercícios e treinos de abertura) quando existem, senão os lances de partidas. Misturar tipos fazia a troca de tipo parecer evolução: lances de partidas antigas seguidos de exercícios de hoje viravam "subindo".
 
 **Influência da dificuldade**: a dificuldade não pondera a estimativa, porque não há dados para calibrar pesos por dificuldade sem arbitrariedade. Ela entra no critério de consolidação (acima) e na dificuldade-alvo.
 
@@ -246,7 +255,7 @@ Antes, uma competência com muitas evidências e taxa baixa aparecia como "desem
 5. **Competência que precisa de revisão**, com os números que a sinalizaram (taxa recente, intervalo, quantidade de evidências) e link para os exercícios dessa competência (`/train?skill=…`).
 6. Mais diagnóstico (competências com evidências insuficientes); sem partidas, convida a importar.
 
-**Revisão vencida** = exercício já tentado cuja data de revisão chegou (`srs.lastReviewedAt` definido e `dueAt ≤ agora`). Um exercício novo nasce com `dueAt` = criação, mas é material novo, não revisão; na lista de treino ele continua marcado "Pendente" como antes. Exercícios de motivo bilateral criados antes de existir `motifSide` contam como tática do próprio jogador.
+**Revisão vencida** = exercício já tentado cuja data de revisão chegou (`srs.lastReviewedAt` definido e `dueAt ≤ agora`). A barra lateral, o dashboard e a Evolução usam essa mesma regra (Sprint 4.5), e a barra lateral recalcula a cada minuto, então uma revisão que vence com o app aberto aparece sem recarregar. Um exercício novo nasce com `dueAt` = criação, mas é material novo, não revisão; na lista de treino ele continua marcado "Pendente" como antes. Exercícios de motivo bilateral criados antes de existir `motifSide` contam como tática do próprio jogador.
 
 **Sessão guiada** (`/train/session`): fila de até `dailyGoal` exercícios, sem repetir nenhum, nesta ordem: revisões vencidas (mais atrasadas primeiro), exercícios do foco recomendado, exercícios a ±1 da dificuldade-alvo da competência. Exercícios não vencidos cuja última tentativa foi um acerto sem ajuda ficam de fora: a repetição espaçada já decidiu quando eles voltam. Também ficam de fora os tentados há menos de 10 minutos (janela de prática), porque uma nova tentativa não seria gravada. O plano fica só no armazenamento local do navegador, válido até o fim do dia ou até "Encerrar"; os resultados são as tentativas normais (mesma janela de prática, mesmo reagendamento, mesmas evidências de perfil).
 

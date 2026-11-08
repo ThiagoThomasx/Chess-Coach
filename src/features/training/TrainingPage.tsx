@@ -92,8 +92,9 @@ export function TrainingPage() {
           <button className="btn btn-primary" disabled={!exercises?.length} onClick={() => navigate('/train/session')} data-testid="open-session">
             <ListChecks size={16} /> Sessão guiada
           </button>
-          <button className="btn" disabled={dueCount === 0} onClick={() => due[0] && navigate(`/train/${due[0].id}`)}>
-            <Target size={16} /> Revisar pendentes ({dueCount})
+          {/* New exercises count here too ("Pendente" in the list): not "reviews", which the sidebar counts (audit AI-5). */}
+          <button className="btn" disabled={dueCount === 0} onClick={() => due[0] && navigate(`/train/${due[0].id}`)} title="Revisões vencidas e exercícios ainda não resolvidos" data-testid="open-pending">
+            <Target size={16} /> Pendentes ({dueCount})
           </button>
         </div>
       </header>

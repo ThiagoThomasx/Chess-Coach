@@ -5,6 +5,8 @@ import { getDb } from '../../db/database';
 import { estimateProfile, SKILLS, SKILL_LABEL } from '../../services/adaptation/skills';
 import { analysesOverTime, attemptStats, errorDistribution, openingResults, openingStudy, themeCounts, toAnalyzedInputs } from '../../services/stats/stats';
 import { findOpening } from '../../services/openings/library';
+import { isDueReview } from '../../services/scheduling/srs';
+import { useMinute } from '../../hooks/useMinute';
 import { SkillProfile } from './SkillProfile';
 import { ClassDistributionChart, CountByDayChart, SkillHistoryChart } from './ProgressCharts';
 import { RecentPerformanceChart } from '../dashboard/RecentPerformanceChart';
@@ -27,6 +29,8 @@ export function ProgressPage() {
   }, []);
   const [skill, setSkill] = useState<Skill>('tactics');
   const [openTheme, setOpenTheme] = useState<string | null>(null);
+  // Re-rendered every minute, like the sidebar and the dashboard (audit AI-2).
+  useMinute();
   if (!data) return <div className="page muted">Carregando…</div>;
   const now = Date.now();
   const inputs = toAnalyzedInputs(data.games, data.analyses);
@@ -36,7 +40,8 @@ export function ProgressPage() {
   const themes = themeCounts(inputs);
   const openings = openingResults(data.games);
   const study = openingStudy(data.openingAttempts);
-  const due = data.exercises.filter((e) => e.srs.dueAt <= now).length;
+  // Same rule as the dashboard and the sidebar: new exercises are not reviews (Sprint 4.5, N3).
+  const due = data.exercises.filter((e) => isDueReview(e.srs, now)).length;
   const reviewed = data.bookmarks.filter((b) => b.reviewedAt).length;
 
   return (

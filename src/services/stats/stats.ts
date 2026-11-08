@@ -1,4 +1,4 @@
-import type { Attempt, Exercise, Game, GameAnalysis, MoveClass, OpeningAttempt, Theme } from '../../types/domain';
+import type { Attempt, Exercise, Game, GameAnalysis, MoveClass, OpeningAttempt, SkillEvent, Theme } from '../../types/domain';
 import { matchOpening } from '../openings/library';
 import { errorThemes, type AnalyzedGameInput, type ErrorPattern } from '../recommendations/recommend';
 import { replyLinesOf } from '../analysis/gameAnalyzer';
@@ -46,6 +46,18 @@ export const dayKey = (t: number): string => {
   const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+
+/**
+ * Calendar day of a skill event. Game evidence carries the game's calendar
+ * date, stored as 00:00 UTC: read in UTC, or west of Greenwich (Brazil) it
+ * would show the day before. Other evidence happened at a real instant and
+ * uses the local day (Sprint 4.5, P3-1).
+ */
+export function evidenceDayKey(e: Pick<SkillEvent, 'at' | 'source'>): string {
+  if (e.source !== 'game') return dayKey(e.at);
+  const d = new Date(e.at);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
 
 /** Attempts grouped by day: independent rate per day (only days with attempts). */
 export function dailyPerformance(attempts: readonly Attempt[]): { day: string; attempts: number; independentRate: number; assistedRate: number }[] {

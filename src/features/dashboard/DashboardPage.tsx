@@ -12,6 +12,7 @@ import { findOpening } from '../../services/openings/library';
 import { isDueReview } from '../../services/scheduling/srs';
 import { RecentPerformanceChart } from './RecentPerformanceChart';
 import { SkillStates } from './SkillStates';
+import { useMinute } from '../../hooks/useMinute';
 
 function useDashboardData() {
   return useLiveQuery(async () => {
@@ -33,6 +34,8 @@ function useDashboardData() {
 export function DashboardPage() {
   const settings = useSettings();
   const data = useDashboardData();
+  // Re-rendered every minute: a review that becomes due while the page stays open is counted (audit AI-2).
+  useMinute();
   if (!data) return <div className="page muted">Carregando…</div>;
   const now = Date.now();
   const { games, analyses, exercises, attempts, events, bookmarks, openingAttempts, custom } = data;

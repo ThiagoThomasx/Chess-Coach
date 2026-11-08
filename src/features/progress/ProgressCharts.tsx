@@ -2,7 +2,7 @@ import { Bar, BarChart, Cell, CartesianGrid, Line, LineChart, ResponsiveContaine
 import type { MoveClass, Skill, SkillEvent } from '../../types/domain';
 import { estimateSkill } from '../../services/adaptation/skills';
 import { CLASS_LABEL } from '../../services/analysis/classify';
-import { dayKey } from '../../services/stats/stats';
+import { evidenceDayKey } from '../../services/stats/stats';
 
 const tooltip = { contentStyle: { background: 'var(--surface-3)', border: '1px solid var(--border-strong)', borderRadius: 8, fontSize: 12 } };
 const tick = { fontSize: 11, fill: 'var(--text-faint)' };
@@ -58,9 +58,9 @@ export function ClassDistributionChart({ dist }: { dist: Record<MoveClass, numbe
 /** Posterior estimate of a skill recomputed at the end of each day with evidence. */
 export function SkillHistoryChart({ events, skill }: { events: readonly SkillEvent[]; skill: Skill }) {
   const own = events.filter((e) => e.skill === skill).sort((a, b) => a.at - b.at);
-  const days = [...new Set(own.map((e) => dayKey(e.at)))];
+  const days = [...new Set(own.map((e) => evidenceDayKey(e)))].sort();
   const data = days.map((d) => {
-    const upto = own.filter((e) => dayKey(e.at) <= d);
+    const upto = own.filter((e) => evidenceDayKey(e) <= d);
     const end = (upto[upto.length - 1]?.at ?? 0) + 1;
     const s = estimateSkill(skill, upto, end);
     return { day: d.slice(5).split('-').reverse().join('/'), level: s.level === null ? null : Math.round(s.level * 100), lo: s.interval ? Math.round(s.interval[0] * 100) : null, hi: s.interval ? Math.round(s.interval[1] * 100) : null };

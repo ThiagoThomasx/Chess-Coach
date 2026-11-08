@@ -30,8 +30,10 @@ AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
                                       → descartado se a árvore aceita o lance jogado → db.exercises
              changeUserColor: troca de lado remove, na transação da cor, os exercícios nunca tentados do lado antigo
              analysis.derivation: 'pending' (gravado junto com a conclusão ou com a cor) → 'done' (quando
-             exercícios e evidências batem com a cor salva); App, ao abrir: redateGameEvidence (idempotente) e depois
-             reconcileDerivations refaz os 'pending'
+             exercícios e evidências batem com a cor salva); App, ao abrir: redateGameEvidence (idempotente),
+             removeOrphanExerciseEvidence (idempotente) e depois reconcileDerivations refaz os 'pending'
+             addExercise(ex, guard): a cor da partida é conferida na mesma transação da gravação
+ExerciseSolver ── recordAttempt relê o exercício na transação (removido → nada é gravado)
 ExerciseSolver ── validateStep / judgeWithEngine ──▶ recordAttempt (attempts + srs + skillEvents, 1 transação)
 Dashboard/Evolução ── useLiveQuery ──▶ estimateProfile, stats, nextTraining
 ```

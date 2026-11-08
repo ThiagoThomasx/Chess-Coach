@@ -77,6 +77,11 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
       { exerciseId: raw.id, at: Date.now(), ...result, hintsUsed: hintsShown + retries, timeMs: Date.now() - startedAt.current, moves: played },
       settings.srsIntervalsDays,
     );
+    if (recorded.removed) {
+      setNextDue(null);
+      setFeedback({ kind: 'warn', text: 'Este exercício foi removido (troca de lado ou exclusão da partida). A tentativa não foi gravada.' });
+      return;
+    }
     setPractice(recorded.practice);
     setNextDue(recorded.practice ? null : recorded.exercise.srs.dueAt);
   };

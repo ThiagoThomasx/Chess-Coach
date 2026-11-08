@@ -1,4 +1,4 @@
-import type { Attempt, ConfidenceLevel, Exercise, MoveReview, Skill, SkillEstimate, SkillEvent } from '../../types/domain';
+import type { Attempt, ConfidenceLevel, Exercise, HistoricalDiagnosis, MoveReview, Skill, SkillEstimate, SkillEvent } from '../../types/domain';
 import { hasMateFor } from '../analysis/evaluation';
 import { gamePhase, settledSwing } from '../chess/material';
 import { legalMoveCount } from '../chess/position';
@@ -20,9 +20,10 @@ export const SKILL_LABEL: Record<Skill, string> = {
 };
 
 /**
- * Four states shown to the player: insufficient evidence; developing (initial
- * or consistent evidence, without mastery); consolidated (provisional
- * mastery); needs review (stale, recent drop, or clearly below 50%).
+ * States shown to the player: insufficient evidence; developing (initial or
+ * consistent evidence, without mastery); consolidated (provisional mastery);
+ * needs review (recent drop or clearly below 50%); no recent evidence (only
+ * evidence older than 30 days: lack of recent data is not lack of skill).
  */
 export const CONFIDENCE_LABEL: Record<ConfidenceLevel, string> = {
   insufficient: 'Evidências insuficientes',
@@ -30,6 +31,7 @@ export const CONFIDENCE_LABEL: Record<ConfidenceLevel, string> = {
   consistent: 'Em desenvolvimento',
   provisional_mastery: 'Consolidada (provisório)',
   needs_review: 'Precisa revisar',
+  no_recent: 'Sem evidência recente',
 };
 
 /** Evidence weights: exercises are direct measurements; game moves are noisy. */
@@ -129,15 +131,16 @@ export const MASTERY_MIN_DIFFICULTY = 3;
 const WEAK_UPPER_BOUND = 0.5;
 
 /**
- * Effective weight of each event: exponential age decay, and diminishing
- * weight for repeated attempts at the same exercise (k-th attempt × 1/k), so
- * memorizing one position cannot inflate a skill.
+ * Effective weight of each event: exponential age decay (unless `decay` is
+ * false, for the historical diagnosis), and diminishing weight for repeated
+ * attempts at the same exercise (k-th attempt × 1/k), so memorizing one
+ * position cannot inflate a skill.
  */
-export function effectiveWeights(events: readonly SkillEvent[], now: number): number[] {
+export function effectiveWeights(events: readonly SkillEvent[], now: number, decay = true): number[] {
   const seen = new Map<string, number>();
   return events.map((e) => {
     const age = Math.max(0, now - e.at) / DAY_MS;
-    let w = e.weight * 0.5 ** (age / HALF_LIFE_DAYS);
+    let w = decay ? e.weight * 0.5 ** (age / HALF_LIFE_DAYS) : e.weight;
     const exId = e.ref.exerciseId;
     if (e.source === 'exercise' && exId) {
       const k = (seen.get(exId) ?? 0) + 1;
@@ -150,11 +153,33 @@ export function effectiveWeights(events: readonly SkillEvent[], now: number): nu
 
 const RECENT_WINDOW = 8;
 const STALE_DAYS = 30;
+/** Below this many events of one kind in the last STALE_DAYS there is no recent rate, trend or recent drop. */
+const MIN_RECENT = 4;
 const Z90 = 1.645;
 
-function rate(events: readonly SkillEvent[]): number | null {
-  const w = events.reduce((s, e) => s + e.weight, 0);
-  return w > 0 ? events.reduce((s, e) => s + e.weight * e.outcome, 0) / w : null;
+/** Beta(1,1) posterior of the success rate for weighted outcomes, with its 90% interval. */
+function posterior(events: readonly SkillEvent[], weights: readonly number[]): { mean: number; interval: [number, number]; evidence: number } {
+  const alpha = 1 + events.reduce((s, e, i) => s + (weights[i] ?? 0) * e.outcome, 0);
+  const beta = 1 + events.reduce((s, e, i) => s + (weights[i] ?? 0) * (1 - e.outcome), 0);
+  const mean = alpha / (alpha + beta);
+  const sd = Math.sqrt((alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1)));
+  return { mean, interval: [Math.max(0, mean - Z90 * sd), Math.min(1, mean + Z90 * sd)], evidence: weights.reduce((s, w) => s + w, 0) };
+}
+
+/**
+ * Evidence of one kind for "recent" comparisons (trend, recent drop): direct
+ * measurements (exercises, opening drills) when there are any, else game
+ * moves. Mixing kinds would make a trend out of the change of kind (old game
+ * moves followed by today's exercises read as "up"; Sprint 4.5, N2).
+ */
+function comparableSeries(events: readonly SkillEvent[]): readonly SkillEvent[] {
+  const direct = events.filter((e) => e.source !== 'game');
+  return direct.length ? direct : events;
+}
+
+function rate(events: readonly SkillEvent[], weights: readonly number[]): number | null {
+  const w = weights.reduce((s, x) => s + x, 0);
+  return w > 0 ? events.reduce((s, e, i) => s + (weights[i] ?? 0) * e.outcome, 0) / w : null;
 }
 
 /**
@@ -191,20 +216,30 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   if (events.length === 0) {
     return { skill, level: null, interval: null, evidence: 0, events: 0, recentRate: null, independentRate: null, assistedRate: null, trend: 'unknown', confidence: 'insufficient', targetDifficulty: target };
   }
-  const weights = effectiveWeights(events, now);
-  const evidence = weights.reduce((s, w) => s + w, 0);
-  const alpha = 1 + events.reduce((s, e, i) => s + (weights[i] ?? 0) * e.outcome, 0);
-  const beta = 1 + events.reduce((s, e, i) => s + (weights[i] ?? 0) * (1 - e.outcome), 0);
-  const mean = alpha / (alpha + beta);
-  const sd = Math.sqrt((alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1)));
-  const interval: [number, number] = [Math.max(0, mean - Z90 * sd), Math.min(1, mean + Z90 * sd)];
+  // Recent evolution: evidence decays with age.
+  const { mean, interval, evidence } = posterior(events, effectiveWeights(events, now));
+  // Historical diagnosis: everything, old games included, without decay (decision D-4 B).
+  const allTime = posterior(events, effectiveWeights(events, now, false));
+  const history: HistoricalDiagnosis = { level: allTime.mean, interval: allTime.interval, evidence: allTime.evidence, events: events.length, from: events[0]?.at ?? 0, to: events[events.length - 1]?.at ?? 0 };
 
-  const recent = events.slice(-RECENT_WINDOW);
-  const previous = events.slice(-2 * RECENT_WINDOW, -RECENT_WINDOW);
-  const recentRate = rate(recent);
-  const prevRate = rate(previous);
+  const series = comparableSeries(events);
+  // Repeated attempts at one exercise count 1/k here too (no age decay: these compare within the series).
+  const seriesWeights = effectiveWeights(series, now, false);
+  const n = series.length;
+  // "Recent" is a time window, not a count: only events of the last STALE_DAYS (at most the last
+  // RECENT_WINDOW of them), and at least MIN_RECENT of them. Otherwise one recent event would turn
+  // weeks- or year-old data into a "recent rate", a trend or even a "needs review" (audit AI-1).
+  const inWindow = series.filter((e) => now - e.at <= STALE_DAYS * DAY_MS).length;
+  const recentCount = Math.min(RECENT_WINDOW, inWindow);
+  const hasRecent = recentCount >= MIN_RECENT;
+  const recentRate = hasRecent ? rate(series.slice(n - recentCount), seriesWeights.slice(n - recentCount)) : null;
+  // The baseline may be older: a trend compares now with before.
+  const prevStart = Math.max(0, n - recentCount - RECENT_WINDOW);
+  const previous = series.slice(prevStart, n - recentCount);
+  const prevRate = rate(previous, seriesWeights.slice(prevStart, n - recentCount));
+  const seriesRate = rate(series, seriesWeights);
   let trend: SkillEstimate['trend'] = 'unknown';
-  if (recentRate !== null && prevRate !== null && previous.length >= 4) {
+  if (recentRate !== null && prevRate !== null && previous.length >= MIN_RECENT) {
     trend = recentRate - prevRate > 0.1 ? 'up' : recentRate - prevRate < -0.1 ? 'down' : 'stable';
   }
   const ex = events.filter((e) => e.source === 'exercise');
@@ -212,14 +247,26 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   const assisted = ex.filter((e) => !e.independent && e.outcome > 0);
   const lastAt = events[events.length - 1]?.at;
 
-  // Staleness is judged on raw (undecayed) evidence: old knowledge is "to review", not "unknown".
+  // Only old evidence (nothing in 30 days): there is no recent measurement, which is not the same as
+  // needing review; the historical diagnosis still says what the evidence shows (decision D-4 B).
   const rawEvidence = events.reduce((s, e) => s + e.weight, 0);
   const stale = lastAt !== undefined && now - lastAt > STALE_DAYS * DAY_MS;
+  const recentDrop = recentRate !== null && seriesRate !== null && recentRate < seriesRate - 0.2;
+  // "Clearly below 50%" asks for review only with a recent sample (any kind, at least MIN_RECENT in the
+  // last STALE_DAYS): otherwise one recent event would turn weeks- or months-old failures into "needs
+  // review", and solving one exercise would switch "no recent evidence" to "needs review" (audit FA-1).
+  // The bound is measured on that recent evidence alone (any kind, 1/k for repeats, no decay): with a
+  // good recent sample, old failures do not ask for review either (audit FA-7).
+  const allWeights = effectiveWeights(events, now, false);
+  const inRecent = events.map((e) => now - e.at <= STALE_DAYS * DAY_MS);
+  const recentEvents = events.filter((_, i) => inRecent[i]);
+  const recentSample = recentEvents.length >= MIN_RECENT;
+  const weak = recentSample && posterior(recentEvents, allWeights.filter((_, i) => inRecent[i])).interval[1] < WEAK_UPPER_BOUND;
   let confidence: ConfidenceLevel;
-  if (stale && rawEvidence >= 6) confidence = 'needs_review';
+  if (stale) confidence = rawEvidence >= 2 ? 'no_recent' : 'insufficient';
   else if (evidence < 2) confidence = 'insufficient';
   else if (evidence < 6) confidence = 'initial';
-  else if ((lastAt !== undefined && now - lastAt > STALE_DAYS * DAY_MS) || (recentRate !== null && recentRate < mean - 0.2) || interval[1] < WEAK_UPPER_BOUND) confidence = 'needs_review';
+  else if (recentDrop || weak) confidence = 'needs_review';
   else if (evidence >= 10 && mean >= 0.75 && interval[0] >= 0.6 && distinctIndependent(ex) >= MASTERY_DISTINCT_EXERCISES && distinctIndependent(ex, MASTERY_MIN_DIFFICULTY) >= MASTERY_HARD_EXERCISES) confidence = 'provisional_mastery';
   else confidence = 'consistent';
 
@@ -229,19 +276,26 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
     interval,
     evidence,
     events: events.length,
-    recentRate,
+    // Without recent evidence there is no recent rate nor trend to show (old data is in `history`).
+    recentRate: confidence === 'no_recent' ? null : recentRate,
     independentRate: ex.length ? indep.length / ex.length : null,
     assistedRate: ex.length ? assisted.length / ex.length : null,
-    trend,
+    trend: confidence === 'no_recent' ? 'unknown' : trend,
     confidence,
     targetDifficulty: target,
     ...(lastAt !== undefined ? { lastAt } : {}),
+    history,
   };
 }
 
-/** With insufficient evidence the point estimate is noise: show only the interval. */
+/** With insufficient (or only old, decayed) evidence the recent point estimate is noise: show only the interval. */
 export function hasPointEstimate(s: SkillEstimate): boolean {
-  return s.level !== null && s.confidence !== 'insufficient';
+  return s.level !== null && s.confidence !== 'insufficient' && s.confidence !== 'no_recent';
+}
+
+/** The historical diagnosis has enough evidence for a point estimate. */
+export function hasHistoricalPoint(h: HistoricalDiagnosis): boolean {
+  return h.evidence >= 2;
 }
 
 function distinctIndependent(ex: readonly SkillEvent[], minDifficulty = 1): number {
