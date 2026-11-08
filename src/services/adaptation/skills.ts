@@ -153,6 +153,8 @@ export function effectiveWeights(events: readonly SkillEvent[], now: number, dec
 
 const RECENT_WINDOW = 8;
 const STALE_DAYS = 30;
+/** Below this many events of one kind in the last STALE_DAYS there is no recent rate, trend or recent drop. */
+const MIN_RECENT = 4;
 const Z90 = 1.645;
 
 /** Beta(1,1) posterior of the success rate for weighted outcomes, with its 90% interval. */
@@ -224,12 +226,20 @@ export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: num
   // Repeated attempts at one exercise count 1/k here too (no age decay: these compare within the series).
   const seriesWeights = effectiveWeights(series, now, false);
   const n = series.length;
-  const recentRate = rate(series.slice(-RECENT_WINDOW), seriesWeights.slice(-RECENT_WINDOW));
-  const previous = series.slice(Math.max(0, n - 2 * RECENT_WINDOW), Math.max(0, n - RECENT_WINDOW));
-  const prevRate = rate(previous, seriesWeights.slice(Math.max(0, n - 2 * RECENT_WINDOW), Math.max(0, n - RECENT_WINDOW)));
+  // "Recent" is a time window, not a count: only events of the last STALE_DAYS (at most the last
+  // RECENT_WINDOW of them), and at least MIN_RECENT of them. Otherwise one recent event would turn
+  // weeks- or year-old data into a "recent rate", a trend or even a "needs review" (audit AI-1).
+  const inWindow = series.filter((e) => now - e.at <= STALE_DAYS * DAY_MS).length;
+  const recentCount = Math.min(RECENT_WINDOW, inWindow);
+  const hasRecent = recentCount >= MIN_RECENT;
+  const recentRate = hasRecent ? rate(series.slice(n - recentCount), seriesWeights.slice(n - recentCount)) : null;
+  // The baseline may be older: a trend compares now with before.
+  const prevStart = Math.max(0, n - recentCount - RECENT_WINDOW);
+  const previous = series.slice(prevStart, n - recentCount);
+  const prevRate = rate(previous, seriesWeights.slice(prevStart, n - recentCount));
   const seriesRate = rate(series, seriesWeights);
   let trend: SkillEstimate['trend'] = 'unknown';
-  if (recentRate !== null && prevRate !== null && previous.length >= 4) {
+  if (recentRate !== null && prevRate !== null && previous.length >= MIN_RECENT) {
     trend = recentRate - prevRate > 0.1 ? 'up' : recentRate - prevRate < -0.1 ? 'down' : 'stable';
   }
   const ex = events.filter((e) => e.source === 'exercise');

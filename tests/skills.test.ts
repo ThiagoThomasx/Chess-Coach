@@ -288,3 +288,43 @@ describe('review findings (Sprint 4.5)', () => {
     expect(rec.message).toContain('Ainda há poucas evidências em');
   });
 });
+
+describe('the recent window is a time window (audit AI-1)', () => {
+  const T = 3000 * DAY_MS;
+  const x = (ageDays: number, outcome: number, id: string, i = 0): SkillEvent => ({ skill: 'strategy', at: T - ageDays * DAY_MS - i * 1000, outcome, weight: 1, independent: outcome === 1, difficulty: 2, source: 'exercise', ref: { exerciseId: id } });
+  const g = (ageDays: number, outcome: number, i: number): SkillEvent => ({ skill: 'strategy', at: T - ageDays * DAY_MS - i * 1000, outcome, weight: 0.2, independent: true, source: 'game', ref: { gameId: `g${i}`, ply: 1 } });
+
+  it('one solved exercise after weeks-old failures is not a "recent drop" nor a review recommendation', () => {
+    const old = [...Array.from({ length: 12 }, (_, i) => x(60, 1, `c${i}`, i)), ...Array.from({ length: 12 }, (_, i) => x(45, 0, `d${i}`, i))];
+    const events = [...old, x(1, 1, 'yesterday')];
+    const s = estimateSkill('strategy', events, T);
+    expect(s.confidence).not.toBe('needs_review');
+    expect(s.recentRate).toBeNull(); // 1 event in 30 days: below the minimum sample
+    expect(s.trend).toBe('unknown');
+    const rec = nextTraining({ profile: estimateProfile(events, T), games: [{ gameId: 'z', userColor: 'w', reviews: [], replyLines: {} }], dueReviews: 0, totalGames: 1 });
+    expect(rec.title).not.toContain('Revisar');
+  });
+
+  it('year-old exercises plus one today give no recent rate nor trend', () => {
+    const old = [...Array.from({ length: 12 }, (_, i) => x(400, 1, `a${i}`, i)), ...Array.from({ length: 12 }, (_, i) => x(370, 0, `b${i}`, i))];
+    const s = estimateSkill('strategy', [...old, x(1, 1, 'today')], T);
+    expect(s.recentRate).toBeNull();
+    expect(s.trend).toBe('unknown');
+  });
+
+  it('two recent game moves after old games: no "recent 75% · up" next to "insufficient"', () => {
+    const old = Array.from({ length: 60 }, (_, i) => g(365, i % 10 < 4 ? 1 : 0, i));
+    const s = estimateSkill('strategy', [...old, g(1, 1, 900), g(1, 1, 901)], T);
+    expect(s.recentRate).toBeNull();
+    expect(s.trend).toBe('unknown');
+  });
+
+  it('enough recent events still give a recent rate, a trend against an older baseline and a real drop', () => {
+    const before = Array.from({ length: 8 }, (_, i) => x(60, 1, `p${i}`, i));
+    const recent = Array.from({ length: 6 }, (_, i) => x(2, 0, `r${i}`, i));
+    const s = estimateSkill('strategy', [...before, ...recent], T);
+    expect(s.recentRate).toBe(0);
+    expect(s.trend).toBe('down');
+    expect(s.confidence).toBe('needs_review');
+  });
+});

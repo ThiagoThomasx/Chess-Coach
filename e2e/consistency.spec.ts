@@ -88,6 +88,9 @@ test('Evolução counts due reviews with the same rule as the dashboard (Sprint 
   await page.reload();
   await expect(page.getByTestId('skill-profile')).toBeVisible();
   await expect(page.locator('.stat', { hasText: 'Revisões pendentes' }).locator('.stat-value')).toHaveText('1');
+  // The training page counts new exercises too, and says so instead of calling them reviews (audit AI-5).
+  await page.goto('/#/train');
+  await expect(page.getByTestId('open-pending')).toHaveText(/^\s*Pendentes \(3\)$/);
 });
 
 test('a new player with only year-old games gets a historical diagnosis, not "needs review" (Sprint 4.5, D-4 B)', async ({ page }) => {
@@ -101,6 +104,7 @@ test('a new player with only year-old games gets a historical diagnosis, not "ne
   await expect(row).toContainText('Sem evidência recente');
   await expect(row).not.toContainText('Precisa revisar');
   await expect(row).not.toContainText(/recente \d|estável|subindo|caindo/);
+  await expect(row).toContainText('Evolução recente:');
   await expect(row.getByTestId('skill-history')).toContainText(/Diagnóstico histórico: 4\d% .*60 evidência\(s\) de \d{2}\/\d{4} a \d{2}\/\d{4}/);
   await page.goto('/#/');
   await expect(page.getByTestId('skill-state-no_recent')).toContainText('Estratégia');
@@ -132,4 +136,18 @@ test('evidence of exercises deleted before Sprint 4.5 is cleaned on the next sta
   ]);
   await page.reload();
   await expect.poll(async () => (await readTable<{ source: string }>(page, 'skillEvents')).map((e) => e.source)).toEqual(['opening']);
+});
+
+test('the dashboard card also follows time while the page stays open (audit AI-2)', async ({ page }) => {
+  await page.clock.install();
+  await importGame(page);
+  const now = await page.evaluate(() => Date.now());
+  await put(page, 'exercises', [exercise('soon', { box: 1, dueAt: now + 2 * 60_000, lastReviewedAt: now - DAY })]);
+  await page.goto('/#/');
+  await page.reload();
+  await expect(page.getByTestId('stat-pending-reviews')).toHaveText('0');
+  await page.clock.fastForward('03:00');
+  // No navigation and no database write: only time passes.
+  await expect(page.getByTestId('stat-pending-reviews')).toHaveText('1');
+  await expect(page.getByRole('navigation', { name: 'Navegação principal' }).getByLabel('1 revisões pendentes')).toHaveText('1');
 });

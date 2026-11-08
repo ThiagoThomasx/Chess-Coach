@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import { ChessQuestDB, getDb, setDb } from '../src/db/database';
 import { getGame, importPgn } from '../src/db/gamesRepo';
@@ -132,6 +132,21 @@ describe('re-dating evidence stored before Sprint 4.4', () => {
 });
 
 describe('calendar day of evidence in the charts (Sprint 4.5, P3-1)', () => {
+  // A zone west of Greenwich, where 00:00 UTC is still the previous local day: without it (a CI runner
+  // in UTC) local and UTC days coincide and the test could not tell them apart (audit AI-4).
+  const previousTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'America/Sao_Paulo';
+  });
+  afterAll(() => {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  });
+
+  it('the zone used by this test is west of Greenwich', () => {
+    expect(new Date(Date.UTC(2025, 0, 10)).getDate()).toBe(9);
+  });
+
   it('game evidence is read on its UTC calendar day; other evidence on the local day', async () => {
     const { evidenceDayKey, dayKey } = await import('../src/services/stats/stats');
     expect(evidenceDayKey({ at: Date.UTC(2025, 0, 10), source: 'game' })).toBe('2025-01-10');

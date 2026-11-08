@@ -224,7 +224,7 @@ Falta de dados recentes não é falta de habilidade: um jogador que só importou
 |---|---|
 | Sem evidência recente | última evidência há > 30 dias, com ≥ 2 de peso bruto (com menos, "evidências insuficientes"). Avaliado antes dos demais |
 | Evidências insuficientes | peso efetivo < 2 |
-| Precisa revisar | taxa recente (últimos 8 eventos **do mesmo tipo**, ver Tendência) 20 p.p. abaixo da taxa desse tipo; **ou limite superior do intervalo de 90% < 50%** (claramente abaixo de 50%, mesmo sem queda recente) |
+| Precisa revisar | taxa recente (eventos **do mesmo tipo** nos **últimos 30 dias**, no máximo os 8 mais novos e no mínimo 4, ver Tendência) 20 p.p. abaixo da taxa desse tipo; **ou limite superior do intervalo de 90% < 50%** (claramente abaixo de 50%, mesmo sem queda recente) |
 | Consolidada (provisório) | peso ≥ 10, média ≥ 75%, limite inferior ≥ 60% **e** acertos independentes em ≥ 5 exercícios distintos, **dos quais ≥ 2 com dificuldade ≥ 3** (capturas triviais sozinhas não consolidam) |
 | Em desenvolvimento | demais casos ("evidências iniciais" quando o peso é < 6) |
 
@@ -232,7 +232,7 @@ Antes, uma competência com muitas evidências e taxa baixa aparecia como "desem
 
 **Exibição**: com poucas evidências, ou só com evidências antigas ("sem evidência recente"), o perfil mostra só o intervalo da evolução recente ("entre X% e Y%"), sem o número central; o diagnóstico histórico mostra o número quando tem peso ≥ 2.
 
-**Tendência**: compara os últimos 8 eventos com os 8 anteriores (≥ 4); diferença > 10 p.p. → subindo/caindo. A comparação usa **um só tipo de evidência** (Sprint 4.5): as medições diretas (exercícios e treinos de abertura) quando existem, senão os lances de partidas. Misturar tipos fazia a troca de tipo parecer evolução: lances de partidas antigas seguidos de exercícios de hoje viravam "subindo".
+**Tendência**: compara os eventos recentes com os 8 anteriores a eles (≥ 4); diferença > 10 p.p. → subindo/caindo. **"Recente" é uma janela de tempo** (auditoria independente da 4.5, AI-1): só entram eventos dos últimos 30 dias, no máximo os 8 mais novos, e são necessários pelo menos 4. Abaixo disso não há taxa recente, tendência nem "Precisa revisar" por queda. Antes, uma única evidência recente fazia eventos de semanas ou de um ano contarem como "recentes". A linha de base da comparação pode ser mais antiga, porque a tendência compara agora com antes. A comparação usa **um só tipo de evidência** (Sprint 4.5): as medições diretas (exercícios e treinos de abertura) quando existem, senão os lances de partidas. Misturar tipos fazia a troca de tipo parecer evolução: lances de partidas antigas seguidos de exercícios de hoje viravam "subindo".
 
 **Influência da dificuldade**: a dificuldade não pondera a estimativa, porque não há dados para calibrar pesos por dificuldade sem arbitrariedade. Ela entra no critério de consolidação (acima) e na dificuldade-alvo.
 

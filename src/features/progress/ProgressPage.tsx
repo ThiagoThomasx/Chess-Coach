@@ -6,6 +6,7 @@ import { estimateProfile, SKILLS, SKILL_LABEL } from '../../services/adaptation/
 import { analysesOverTime, attemptStats, errorDistribution, openingResults, openingStudy, themeCounts, toAnalyzedInputs } from '../../services/stats/stats';
 import { findOpening } from '../../services/openings/library';
 import { isDueReview } from '../../services/scheduling/srs';
+import { useMinute } from '../../hooks/useMinute';
 import { SkillProfile } from './SkillProfile';
 import { ClassDistributionChart, CountByDayChart, SkillHistoryChart } from './ProgressCharts';
 import { RecentPerformanceChart } from '../dashboard/RecentPerformanceChart';
@@ -28,6 +29,8 @@ export function ProgressPage() {
   }, []);
   const [skill, setSkill] = useState<Skill>('tactics');
   const [openTheme, setOpenTheme] = useState<string | null>(null);
+  // Re-rendered every minute, like the sidebar and the dashboard (audit AI-2).
+  useMinute();
   if (!data) return <div className="page muted">Carregando…</div>;
   const now = Date.now();
   const inputs = toAnalyzedInputs(data.games, data.analyses);

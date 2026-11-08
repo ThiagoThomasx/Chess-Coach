@@ -2,7 +2,7 @@
 
 - **Branch:** `feat/sprint4-5-consistent-profile`, criada a partir de `main` em `edf4de8` (merge do PR #7; CI pós-merge run `42396932386`, sucesso).
 - **Data:** 2026-11-07.
-- **Situação:** implementado e testado localmente. **Nada foi commitado, enviado ou aberto como PR.**
+- **Situação:** commit `64974b0`, PR #8 aberto (CI verde). Correções da auditoria independente (`SPRINT4-5-AUDITORIA-INDEPENDENTE.md` §11) aplicadas na mesma branch. Merge só com autorização, por merge commit.
 - **Origem:** `SPRINT4-5-PLANEJAMENTO-AUDITORIA.md`, com as decisões do usuário:
   - **D-4:** alternativa B;
   - **D-5:** limpar as evidências órfãs.
@@ -124,11 +124,11 @@ Um agente revisor independente aprovou a mudança, sem achados críticos ou alto
 | Verificação | Antes (`edf4de8`) | Sprint 4.5 |
 |---|---|---|
 | typecheck | ok | ok |
-| Vitest | 370 (23 arquivos) | **385** (24 arquivos) |
-| Stockfish real | 21 | **22** (Partida da Ópera) |
-| Cobertura (`src/services`, `src/db`) | linhas 93,62 · statements 90,06 · branches 82,73 · funções 86,59 | linhas **93,74** · statements **90,25** · branches **83,05** · funções **87,14** |
+| Vitest | 370 (23 arquivos) | **391** (24 arquivos), com as correções da auditoria independente |
+| Stockfish real | 21 | **23** (Partida da Ópera: árvore e derivação integrada) |
+| Cobertura (`src/services`, `src/db`) | linhas 93,62 · statements 90,06 · branches 82,73 · funções 86,59 | linhas **93,76** · statements **90,27** · branches **83,07** · funções **87,16** |
 | Build | ok | ok |
-| Playwright (porta 4176) | 53 | **58** (+5 em `consistency.spec.ts`) |
+| Playwright (porta 4176) | 53 | **59** (+6 em `consistency.spec.ts`) |
 
 ## 7. Pendências
 

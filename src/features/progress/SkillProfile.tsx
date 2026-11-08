@@ -55,8 +55,12 @@ export function SkillProfile({ profile }: Props) {
                   {hasPointEstimate(s) && <span className="pt" style={{ left: `${s.level * 100}%` }} />}
                 </div>
                 <div className="row xs muted" style={{ marginTop: '0.3rem' }}>
-                  <span className="mono">
-                    {hasPointEstimate(s) ? `${pct(s.level)} (${pct(s.interval[0])}–${pct(s.interval[1])})` : `entre ${pct(s.interval[0])} e ${pct(s.interval[1])}`}
+                  {/* Labelled, so it is not mistaken for the historical diagnosis below (audit AI-6). */}
+                  <span>
+                    Evolução recente:{' '}
+                    <span className="mono" data-testid="skill-recent">
+                      {hasPointEstimate(s) ? `${pct(s.level)} (${pct(s.interval[0])}–${pct(s.interval[1])})` : `entre ${pct(s.interval[0])} e ${pct(s.interval[1])}`}
+                    </span>
                   </span>
                   <span>recente {pct(s.recentRate)}</span>
                   {s.independentRate !== null && <span>sem dica {pct(s.independentRate)}</span>}

@@ -1,4 +1,5 @@
 // Runs the real Stockfish 19 WASM build (the same file the app serves) in Node.
+import 'fake-indexeddb/auto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,11 @@ import { parsePgnText } from '../src/services/pgn/parsePgn';
 import { OPERA_GAME, SHORT_BLUNDER_GAME } from './fixtures';
 import { acceptsPlayedMove, buildExercise, withSolutionTree } from '../src/services/exercises/generate';
 import { judgeOffBook, validateLine } from '../src/services/openings/practice';
+import { ChessQuestDB, getDb, setDb } from '../src/db/database';
+import { getGame, importPgn, setUserColor } from '../src/db/gamesRepo';
+import { DEFAULT_SETTINGS } from '../src/db/settings';
+import { deriveFromAnalysis } from '../src/services/analysis/analysisRunner';
+import type { GameAnalysis } from '../src/types/domain';
 
 const BRIDGE = fileURLToPath(new URL('./support/sf-bridge.cjs', import.meta.url));
 
@@ -269,5 +275,24 @@ describe('quick-analysis false errors are discarded by the deeper tree (Sprint 4
     expect(acceptsPlayedMove(full, review.uci, before.depth)).toBe(true);
     // The same tree does not overrule an analysis as deep as itself (audit A5-1).
     expect(acceptsPlayedMove(full, review.uci, full.tree!.depth)).toBe(false);
+  }, 180_000);
+
+  it('the integrated derivation creates no exercise for 15.Bxd7+ (audit AI-3)', async () => {
+    setDb(new ChessQuestDB('opera-derivation'));
+    const r = await importPgn(OPERA_GAME, 'opera.pgn', []);
+    const id = r.imported[0]!.id;
+    await setUserColor(id, 'w');
+    const game = (await getGame(id))!;
+    const review = reviewMove(ply, before, after)!;
+    // Only this position is analysed: the frozen depth-11 search before and after 15.Bxd7+.
+    const positions: GameAnalysis['positions'] = Array.from({ length: game.moves.length + 1 }, () => null);
+    positions[28] = before;
+    positions[29] = after;
+    const analysis: GameAnalysis = { gameId: id, status: 'complete', settings: { depth: 11, multiPv: 3 }, positions, reviews: [review], startedAt: 0, updatedAt: 0 };
+
+    const d = await deriveFromAnalysis(game, analysis, { ...DEFAULT_SETTINGS, analysisDepth: 16 }, engine);
+
+    expect(d).toEqual({ hasUserColor: true, exercisesAdded: 0 });
+    expect(await getDb().exercises.where('gameId').equals(id).count()).toBe(0);
   }, 180_000);
 });
