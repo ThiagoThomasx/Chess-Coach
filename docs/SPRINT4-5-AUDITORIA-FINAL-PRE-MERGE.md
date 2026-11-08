@@ -266,6 +266,8 @@ Nenhum desses itens bloqueia o merge.
 
 ## 12. Veredito final
 
+> Este é o veredito sobre `cd992e7`. Para o estado depois da correção do FA-1 (`d474223`), veja a seção 13, que traz o veredito atualizado.
+
 **APROVADO COM RESSALVAS**
 
 - Nenhum P0 ou P1. A integridade dos dados está preservada: exclusões, limpeza de órfãs, tentativas e derivação são transacionais e consistentes em todas as ordens analisadas.
@@ -275,14 +277,112 @@ Nenhum desses itens bloqueia o merge.
 
 A decisão de integração é exclusivamente do usuário. Esta auditoria não fez merge, commit nem push, e não alterou nenhum arquivo além deste documento.
 
-## 13. Correção aplicada depois desta auditoria (FA-1)
+## 13. FA-1 — Correção pós-auditoria
 
-A pedido do usuário, depois da entrega desta auditoria, o FA-1 foi corrigido na mesma branch, sobre `cd992e7`. A correção ainda não tem commit. FA-2 a FA-6 continuam abertos.
+### 13.1 Identificação
 
-| Item | Correção | Verificação |
-|---|---|---|
-| **FA-1** (P2) | `estimateSkill` (`skills.ts`): o ramo "limite superior < 50%" só vale com amostra recente, ou seja, ≥ 4 evidências de **qualquer tipo** nos últimos 30 dias. Sem ela, a competência fica "Em desenvolvimento" e o diagnóstico histórico continua mostrando a fraqueza. O "qualquer tipo" preserva o cenário F (exercícios antigos + muitos lances de partida errados recentes continuam pedindo revisão), mesmo com a série de comparação de FA-2 | 6 testes novos em `tests/skills.test.ts`, escritos antes da correção. 5 falharam antes (RED): cenários B, C e D com 35, 90 e 200 dias, a recomendação "Revisar" e a troca "Sem evidência recente" → "Precisa revisar". O sexto é um guarda que já passava (revisão ainda pedida com amostra recente, exercícios ou partidas) |
+| Item | Valor |
+|---|---|
+| Achado | **FA-1** (P2): evidências antigas geravam "Precisa revisar" pelo limite fraco quando havia uma única evidência recente |
+| Commit da correção | `d474223fcda7503d886f63f370f3cef276adcf86`, "fix: old evidence no longer asks for review through the weak bound (FA-1)", sobre `cd992e7` |
+| Arquivos | `src/services/adaptation/skills.ts` (+6/−1), `tests/skills.test.ts` (+34), `docs/METHODOLOGY.md` (regra na tabela de estados), este relatório |
+| Validação pós-correção | 2026-11-08, sobre o HEAD `d474223` (local = remoto = HEAD do PR #8), árvore limpa exceto `.claude/` (não versionada) |
 
-Suíte depois da correção: typecheck ok; Vitest **397** (391 + 6); Playwright **59** (com build); cobertura de linhas 93,76%, branches 83,09%. `docs/METHODOLOGY.md` (tabela de estados) atualizado com a regra.
+### 13.2 Defeito, relevância e causa (antes da correção)
 
-Com FA-1 corrigido, não resta P2. Os itens abertos são só P3 (FA-2 a FA-6), o que atenderia ao critério de **APROVADO COM RESSALVAS** sem a ressalva principal. A correção ainda precisa de commit e de CI verde no novo SHA antes do merge.
+- **Defeito**: 20 exercícios errados há 35, 90 ou 200 dias + 1 acerto hoje → `needs_review` e a recomendação "Revisar: …". Sem o acerto de hoje → `no_recent`.
+- **Relevância**: contrariava a regra da alternativa B ("evidências antigas não geram pedidos de revisão") e a afirmação da correção AI-1. Na prática, resolver um exercício corretamente piorava o estado exibido.
+- **Causa**: o ramo `interval[1] < 50%` usava o posterior com decaimento (meia-vida de 120 dias, então o peso antigo continua alto), e um único evento recente bastava para `stale` ser falso.
+
+### 13.3 Alteração implementada
+
+Em `estimateSkill`, o ramo do limite fraco agora exige amostra recente:
+
+```ts
+const recentSample = events.filter((e) => now - e.at <= STALE_DAYS * DAY_MS).length >= MIN_RECENT;
+const weak = recentSample && interval[1] < WEAK_UPPER_BOUND;
+...
+else if (recentDrop || weak) confidence = 'needs_review';
+```
+
+- Amostra recente: ≥ 4 eventos (`MIN_RECENT`) de **qualquer tipo** nos últimos 30 dias (`STALE_DAYS`), as mesmas constantes da janela recente. O "qualquer tipo" preserva o caso de exercícios antigos seguidos de muitos lances de partida errados recentes, que continua pedindo revisão.
+- Ficam inalterados: o diagnóstico histórico (`history`, sem decaimento), a taxa recente, a tendência, a queda recente, `no_recent` e a consolidação. Sem amostra recente, a competência cai em "Em desenvolvimento" (ou "Consolidada", se cumprir os critérios), e a linha histórica continua mostrando a fraqueza.
+- A correção não suprime revisões: com amostra recente fraca, a revisão continua sendo pedida (cenários B e C abaixo).
+
+### 13.4 Os seis testes adicionados (`tests/skills.test.ts`, bloco "final audit FA-1")
+
+| # | Cenário | Esperado | Regra validada | Sem a correção |
+|---|---|---|---|---|
+| 1–3 | 20 erros há 35 / 90 / 200 dias + 1 acerto hoje (`it.each`) | não `needs_review`; `history.level < 0,2`; recomendação sem "Revisar" | antigo não pede revisão; histórico preservado | **falha** (3) |
+| 4 | 20 erros há 35 dias + 1 lance de partida (peso 0,3) hoje | não `needs_review` | vale também para evidência de partida | **falha** |
+| 5 | 20 erros há 35 dias: `no_recent`; + 1 acerto hoje: não `needs_review` | sem a inversão de estado | um acerto não piora o estado | **falha** |
+| 6 | (a) 8 erros recentes; (b) 6 exercícios antigos bons + 30 lances de partida errados recentes | `needs_review` nos dois | revisão legítima preservada, de qualquer tipo | passa (guarda) |
+
+**Mutação**: removi o gate (`const weak = interval[1] < WEAK_UPPER_BOUND`) num worktree temporário, e os testes 1–5 falharam (5 failed | 36 passed). O guarda 6 também passa sem a correção, como deveria.
+
+**Lacuna**: nenhum dos seis cobre amostra recente suficiente e **boa** acompanhada de muita evidência antiga ruim (FA-7 abaixo).
+
+### 13.5 Testes nesta validação (HEAD `d474223`)
+
+| Indicador | Antes da FA-1 (`cd992e7`) | Agora (`d474223`) |
+|---|---:|---:|
+| Typecheck | ok | **ok** |
+| Vitest | 391 | **397** (+6 novos; nenhum existente removido ou alterado) |
+| Stockfish real (arquivo isolado) | 23 | **23** |
+| Build de produção | ok | **ok** |
+| Playwright | 59 | **59** |
+| Cobertura de linhas | 93,76% (1999/2132) | **93,76%** (2001/2134) |
+| Cobertura de branches | 83,07% (1821/2192) | **83,09%** (1823/2194) |
+| Statements / funções | 90,27% / 87,16% | 90,28% / 87,18% |
+
+As pequenas diferenças de cobertura vêm das duas linhas e dos dois ramos novos (`recentSample && …`), todos cobertos pelos testes novos.
+
+### 13.6 Revisão de regressões
+
+Sondas com o código real (agora = 2026-11-08 15:00 UTC; exercícios distintos, peso 1):
+
+| Cenário | Estado | Taxa recente / tendência | Histórico | Recomendação | Avaliação |
+|---|---|---|---|---|---|
+| A. 20 erros há 60 dias, só isso | `no_recent` | — / unknown | 5% | Ampliar o diagnóstico | ✔ |
+| B. 10 erros recentes, só isso | `needs_review` | 0% / unknown | 8% | Revisar | ✔ revisão legítima |
+| B2. 10 acertos recentes | `consistent` | 100% | 92% | — | ✔ |
+| C. 20 erros antigos + 6 erros recentes | `needs_review` | 0% / stable | 4% | Revisar | ✔ |
+| C2. 20 acertos antigos + 6 erros recentes | `needs_review` | 0% / down | 75% | Revisar | ✔ queda real |
+| D. 20 erros antigos + 3 acertos recentes (< 4) | `consistent` | — / unknown | 16% | Ampliar | ✔ sem revisão abaixo da amostra mínima |
+| **E. 20 erros há 60 dias + 4 acertos recentes** | **`needs_review`** | **100% / up** | 19% | **Revisar** | ✗ **FA-7** |
+| E2. 20 erros há 60 dias + 8 acertos recentes | `consistent` | 100% / up | 30% | Ampliar | ✔ |
+| **E3. 40 erros há 90 dias + 8 acertos recentes** | **`needs_review`** | **100% / up** | 18% | **Revisar** | ✗ **FA-7** |
+| E4. 8 acertos + 4 erros recentes | `consistent` | 50% / down | 64% | — | ✔ |
+| F. 6 exercícios antigos bons + 30 lances errados recentes | `needs_review` | — / unknown (FA-2) | 41% | Revisar | ✔ estado; FA-2 continua |
+
+Componentes: dashboard (`SkillStates`), Evolução (`SkillProfile`) e recomendações (`nextTraining`) continuam consumindo o mesmo `estimateProfile(...).confidence`, e a correção só mexe dentro de `estimateSkill`. Barra lateral, contadores e revisões vencidas (`isDueReview`) não dependem dessa função e não mudaram. O Playwright completo (59) confirma as telas.
+
+**Diagnóstico histórico, taxa recente, tendências e `no_recent`**: sem mudança de comportamento (o diff não toca esse código, e as sondas A, B2, C2 e E4 batem com a seção 5).
+
+### 13.7 Achado novo: FA-7 — Com amostra recente suficiente e boa, evidências antigas ainda pedem revisão (P2)
+
+- **Arquivo**: `src/services/adaptation/skills.ts:258-264`. Depois que o gate de amostra recente abre, o limite fraco continua avaliado sobre o posterior **com decaimento de todas as evidências** (`interval`, linha 220), e não sobre as evidências recentes.
+- **Reprodução**: cenários E (20 erros há 60 dias + 4 acertos nos últimos dias) e E3 (40 erros há 90 dias + 8 acertos recentes).
+- **Evidência**: `needs_review` e a recomendação "Revisar: Visão tática", ao lado de "recente 100% · subindo".
+- **Impacto**: um jogador que melhorou e acertou todos os exercícios recentes é mandado revisar, por causa de erros de meses atrás. Contraria a regra "a decisão de revisão respeita os critérios de evidência recente" (cenários C e E desta validação). Só afeta diagnóstico e recomendação, sem dados persistidos.
+- **Origem**: **não é uma regressão do `d474223`**. Já acontecia em `cd992e7` e na `main` (lá até com menos evidência recente). É a mesma família do FA-1, que corrigiu o caso de amostra insuficiente, mas não o de amostra suficiente e boa.
+- **Consistência com a metodologia**: a implementação corresponde ao texto atual de `METHODOLOGY.md` ("limite superior < 50%, desde que haja pelo menos 4 evidências recentes"). O texto não promete avaliar o limite só sobre as evidências recentes. Portanto, não há divergência entre código e documento. O que diverge é a regra de produto mais ampla.
+- **Recomendação**: avaliar o limite fraco sobre as evidências da janela recente (por exemplo, o posterior das últimas ≥ 4 evidências dos 30 dias), ou exigir também `recentRate < 0,5`. Junto, testes com os cenários E e E3, e a atualização da linha da metodologia.
+- **Fora do escopo desta validação**: as regras desta etapa autorizam só a atualização do relatório. FA-7 está registrado e não corrigido.
+
+### 13.8 Situação dos achados
+
+| Achado | Situação |
+|---|---|
+| FA-1 (P2) | **Corrigido e validado** em `d474223`: testes, mutação, suíte completa e sondas |
+| FA-7 (P2, novo) | **Aberto**, documentado acima. Não é regressão do commit |
+| FA-2 a FA-6 (P3) | Abertos, sem mudança |
+
+### 13.9 Veredito atualizado (estado `d474223` + este relatório)
+
+**APROVADO COM RESSALVAS**
+
+- FA-1 está tecnicamente corrigido. Os seis testes novos passam e detectam a remoção da correção. Não há regressão: suíte completa verde e mesmos números, mais os 6 testes novos. A documentação é consistente com o código. A integridade dos dados não é afetada.
+- Nenhum P0 ou P1. Resta **um P2 aberto (FA-7)**, que impede o veredito APROVADO pelo critério "nenhum P0, P1 ou P2 aberto". FA-7 afeta só diagnóstico e recomendação, já existia antes do PR e está documentado.
+- **Decisão a explicitar pelo usuário**: aceitar FA-7 como ressalva e corrigi-lo depois do merge, ou corrigi-lo antes. Recomendo corrigir antes do merge, porque é uma mudança pequena no mesmo ponto do código e na mesma regra de produto.
+- CI: `verify` **SUCCESS** em `d474223`. O commit documental com este relatório dispara uma nova execução, cujo resultado consta do relatório final ao usuário.
