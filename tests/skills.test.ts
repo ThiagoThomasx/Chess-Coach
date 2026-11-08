@@ -75,9 +75,13 @@ describe('skill profile', () => {
     expect(fresh.evidence).toBeCloseTo(1, 2);
   });
 
-  it('flags stale knowledge for review', () => {
+  it('only old evidence means no recent evidence, not a need for review (decision D-4 B)', () => {
     const old = Array.from({ length: 10 }, (_, i) => ev(1, i, { at: i }));
-    expect(estimateSkill('tactics', old, NOW).confidence).toBe('needs_review');
+    const s = estimateSkill('tactics', old, NOW);
+    expect(s.confidence).toBe('no_recent');
+    // The historical diagnosis still says what the evidence shows: 10 successes.
+    expect(s.history?.level).toBeGreaterThan(0.85);
+    expect(s.history?.events).toBe(10);
   });
 
   it('separates independent and hint-assisted performance', () => {
@@ -213,5 +217,74 @@ describe('recommendations', () => {
     expect(rec.kind).toBe('skill');
     expect(rec.message).toMatch(/Defesa precisa de revisão \(taxa recente \d+%; estimativa entre \d+% e \d+%, em 10 evidência/);
     expect(rec.action.to).toBe('/train?skill=defense');
+  });
+});
+
+describe('historical diagnosis and recent evolution (Sprint 4.5, decision D-4 B)', () => {
+  const YEAR = 365 * DAY_MS;
+  const T = 2000 * DAY_MS;
+  const game = (ageMs: number, outcome: number, i: number): SkillEvent => ({ skill: 'strategy', at: T - ageMs - i * DAY_MS, outcome, weight: 0.2, independent: true, source: 'game', ref: { gameId: `g${i}`, ply: 1 } });
+  const exercise = (outcome: number, i: number, at = T): SkillEvent => ({ skill: 'strategy', at: at - i * 1000, outcome, weight: 1, independent: outcome === 1, difficulty: 2, source: 'exercise', ref: { exerciseId: `x${i}` } });
+  const oldGames = Array.from({ length: 60 }, (_, i) => game(YEAR, i % 10 < 4 ? 1 : 0, i));
+
+  it('a new player with only year-old games gets a historical diagnosis and no false "needs review"', () => {
+    const s = estimateSkill('strategy', oldGames, T);
+    expect(s.confidence).toBe('no_recent');
+    expect(s.history?.level).toBeCloseTo(0.4, 1);
+    expect(s.history?.evidence).toBeCloseTo(12, 5); // 60 × 0.2, no decay
+    expect(s.history?.from).toBeLessThan(s.history?.to ?? 0);
+    expect(hasPointEstimate(s)).toBe(false); // the decayed recent estimate is not shown as a number
+    // Nor a "recent" rate or a trend computed from year-old moves.
+    expect(s.recentRate).toBeNull();
+    expect(s.trend).toBe('unknown');
+  });
+
+  it('the historical diagnosis does not decay with age; the recent evolution does', () => {
+    const recent = estimateSkill('strategy', oldGames.map((e) => ({ ...e, at: e.at + YEAR })), T);
+    const old = estimateSkill('strategy', oldGames, T);
+    expect(old.history?.level).toBeCloseTo(recent.history?.level ?? 0, 10);
+    expect(old.history?.evidence).toBeCloseTo(recent.history?.evidence ?? 0, 10);
+    expect(old.evidence).toBeLessThan(recent.evidence / 5);
+  });
+
+  it('exercises after old games do not make a trend out of the change of evidence kind (N2)', () => {
+    const s = estimateSkill('strategy', [...oldGames, ...[1, 1, 1, 1, 0].map((o, i) => exercise(o, i))], T);
+    expect(s.trend).toBe('unknown'); // only 5 exercises: no earlier exercises to compare with
+    expect(s.confidence).not.toBe('needs_review');
+  });
+
+  it('a real drop within the same kind of evidence still asks for review, with a downward trend', () => {
+    const outcomes = [...Array(8).fill(1), ...Array(8).fill(0)];
+    const s = estimateSkill('strategy', [...oldGames, ...outcomes.map((o, i) => exercise(o, 15 - i))], T);
+    expect(s.trend).toBe('down');
+    expect(s.confidence).toBe('needs_review');
+  });
+
+  it('games-only evidence compares game moves with game moves', () => {
+    const recentGames = Array.from({ length: 16 }, (_, i) => game(0, i < 8 ? 0 : 1, 15 - i));
+    expect(estimateSkill('strategy', recentGames, T).trend).toBe('up');
+  });
+});
+
+describe('review findings (Sprint 4.5)', () => {
+  const T = 2000 * DAY_MS;
+  it('repeating one exercise does not fabricate a recent drop (1/k also in the recent comparison)', () => {
+    const ev = (i: number, outcome: number, exerciseId: string) => ({ skill: 'tactics' as const, at: T - (20 - i) * 1000, outcome, weight: 1, independent: outcome === 1, difficulty: 2, source: 'exercise' as const, ref: { exerciseId } });
+    // 8 distinct exercises solved, then 4 more solved and one exercise failed 4 times in a row.
+    const events = [...Array.from({ length: 12 }, (_, i) => ev(i, 1, `d${i}`)), ...Array.from({ length: 4 }, (_, i) => ev(12 + i, 0, 'same'))];
+    const s = estimateSkill('tactics', events, T);
+    // With raw weights: recent 4/8 = 50% against 12/16 = 75% (a 25 p.p. "drop"). With 1/k the repeats
+    // weigh 1 + 1/2 + 1/3 + 1/4: recent 4/6.08 ≈ 66% against 12/14.08 ≈ 85%, below the 20 p.p. threshold.
+    expect(s.recentRate).toBeCloseTo(4 / (4 + 1 + 1 / 2 + 1 / 3 + 1 / 4), 3);
+    expect(s.confidence).not.toBe('needs_review');
+  });
+
+  it('skills without recent evidence are named even when others still lack evidence', () => {
+    const T2 = 1000 * DAY_MS;
+    const old = Array.from({ length: 20 }, (_, i) => ({ skill: 'strategy' as const, at: T2 - 400 * DAY_MS - i * DAY_MS, outcome: 1, weight: 0.2, independent: true, source: 'game' as const, ref: { gameId: 'g', ply: i } }));
+    const profile = estimateProfile(old, T2);
+    const rec = nextTraining({ profile, games: [{ gameId: 'g', userColor: 'w', reviews: [], replyLines: {} }], dueReviews: 0, totalGames: 1 });
+    expect(rec.message).toContain('Sem evidência recente em: Estratégia');
+    expect(rec.message).toContain('Ainda há poucas evidências em');
   });
 });

@@ -75,6 +75,9 @@ export async function deleteGame(id: string): Promise<void> {
   await db.transaction('rw', [db.games, db.analyses, db.bookmarks, db.exercises, db.attempts, db.skillEvents], async () => {
     const exIds = (await db.exercises.where('gameId').equals(id).toArray()).map((e) => e.id);
     await db.attempts.where('exerciseId').anyOf(exIds).delete();
+    // Evidence of exercise attempts refers to the exercise only (no gameId): remove it with its exercise,
+    // as deleteExercise does, or the profile keeps counting training the user deleted (Sprint 4.5, N1).
+    await db.skillEvents.where('ref.exerciseId').anyOf(exIds).delete();
     await db.exercises.where('gameId').equals(id).delete();
     await db.skillEvents.where('ref.gameId').equals(id).delete();
     await db.bookmarks.where('gameId').equals(id).delete();

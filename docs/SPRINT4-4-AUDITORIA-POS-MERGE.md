@@ -238,7 +238,7 @@ Não há P0 nem P1.
 
 ## 8.1 Correções feitas depois desta auditoria
 
-O usuário pediu a correção dos dois P2. Elas foram feitas na branch `fix/sprint4-4-audit-p2`, a partir de `9e1243d`:
+O usuário pediu a correção dos dois P2. Elas foram feitas na branch `fix/sprint4-4-audit-p2`, a partir de `9e1243d`, e **integradas pelo PR #7** (merge commit `edf4de8`, CI pós-merge run `42396932386`, sucesso):
 
 | Achado | Correção | Testes |
 |---|---|---|

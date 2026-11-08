@@ -96,7 +96,7 @@ export function Solver({ ex, settings, session }: SolverProps) {
         <div className="solver-side stack">
           <section className="panel action-panel" aria-label="Ações do exercício">
             {s.feedback && (
-              <p className={`callout callout-${s.feedback.kind} fade-in`} data-testid="exercise-feedback">
+              <p className={`callout callout-${s.feedback.kind} fade-in`} role="status" aria-live="polite" data-testid="exercise-feedback">
                 {s.feedback.text}
               </p>
             )}

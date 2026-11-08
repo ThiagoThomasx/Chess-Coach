@@ -283,7 +283,23 @@ export interface SkillEvent {
   ref: { gameId?: string; ply?: number; exerciseId?: string; lineId?: string };
 }
 
-export type ConfidenceLevel = 'insufficient' | 'initial' | 'consistent' | 'provisional_mastery' | 'needs_review';
+/** `no_recent`: there is evidence, but none in the last 30 days (not the same as needing review). */
+export type ConfidenceLevel = 'insufficient' | 'initial' | 'consistent' | 'provisional_mastery' | 'needs_review' | 'no_recent';
+
+/**
+ * What all the evidence says about a skill, old games included, without age
+ * decay (Sprint 4.5, decision D-4 B): the starting diagnosis. The main
+ * estimate (with decay) is the recent evolution.
+ */
+export interface HistoricalDiagnosis {
+  level: number;
+  interval: [number, number];
+  evidence: number;
+  events: number;
+  /** Time span the evidence covers (game dates for game evidence). */
+  from: number;
+  to: number;
+}
 
 export interface SkillEstimate {
   skill: Skill;
@@ -300,6 +316,8 @@ export interface SkillEstimate {
   confidence: ConfidenceLevel;
   targetDifficulty: number;
   lastAt?: number;
+  /** All-time diagnosis without age decay; absent without evidence. */
+  history?: HistoricalDiagnosis;
 }
 
 export interface OpeningLine {

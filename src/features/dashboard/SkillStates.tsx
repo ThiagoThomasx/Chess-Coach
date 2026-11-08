@@ -4,13 +4,14 @@ import { SKILL_LABEL } from '../../services/adaptation/skills';
 
 type Props = { profile: readonly SkillEstimate[] };
 
-type State = 'review' | 'developing' | 'consolidated' | 'insufficient';
+type State = 'review' | 'developing' | 'consolidated' | 'no_recent' | 'insufficient';
 
-/** The four states the player acts on, in decision order: what to review first, what is still forming. */
+/** The states the player acts on, in decision order: what to review first, what is still forming, what has no recent data. */
 const STATES: { id: State; title: string; hint: string; tag: string }[] = [
-  { id: 'review', title: 'Precisam revisar', hint: 'Queda recente, abaixo de 50% ou sem prática há mais de 30 dias.', tag: 'tag tag-warn' },
+  { id: 'review', title: 'Precisam revisar', hint: 'Queda recente ou claramente abaixo de 50%.', tag: 'tag tag-warn' },
   { id: 'developing', title: 'Em desenvolvimento', hint: 'Há evidências, mas ainda sem domínio.', tag: 'tag tag-info' },
   { id: 'consolidated', title: 'Consolidadas', hint: 'Domínio provisório: acertos sem dica em exercícios distintos.', tag: 'tag tag-good' },
+  { id: 'no_recent', title: 'Sem evidência recente', hint: 'Só há evidências com mais de 30 dias. O perfil completo mostra o diagnóstico histórico.', tag: 'tag' },
   { id: 'insufficient', title: 'Evidências insuficientes', hint: 'Resolva exercícios ou analise partidas para medir.', tag: 'tag' },
 ];
 
@@ -18,6 +19,7 @@ function stateOf(s: SkillEstimate): State {
   if (s.confidence === 'needs_review') return 'review';
   if (s.confidence === 'provisional_mastery') return 'consolidated';
   if (s.confidence === 'insufficient') return 'insufficient';
+  if (s.confidence === 'no_recent') return 'no_recent';
   return 'developing';
 }
 
@@ -47,7 +49,7 @@ export function SkillStates({ profile }: Props) {
                 {skills.map((s) => (
                   <li key={s.skill} className="small row">
                     <span>{SKILL_LABEL[s.skill]}</span>
-                    {s.interval && st.id !== 'insufficient' && <span className="xs faint mono">{`${pct(s.interval[0])}–${pct(s.interval[1])}`}</span>}
+                    {s.interval && st.id !== 'insufficient' && st.id !== 'no_recent' && <span className="xs faint mono">{`${pct(s.interval[0])}–${pct(s.interval[1])}`}</span>}
                   </li>
                 ))}
               </ul>

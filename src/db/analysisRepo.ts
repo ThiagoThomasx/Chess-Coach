@@ -60,7 +60,7 @@ export async function redateGameEvidence(): Promise<number> {
   const db = getDb();
   return db.transaction('rw', db.games, db.skillEvents, async () => {
     const games = new Map((await db.games.toArray()).map((g) => [g.id, g]));
-    const stale = (await db.skillEvents.filter((e) => e.source === 'game').toArray()).flatMap((e) => {
+    const stale = (await db.skillEvents.where('source').equals('game').toArray()).flatMap((e) => {
       const game = e.ref.gameId ? games.get(e.ref.gameId) : undefined;
       if (!game || e.id === undefined) return [];
       const at = gameEvidenceTime(game, e.at);

@@ -2,7 +2,7 @@
 
 - **Branch:** `feat/sprint4-4-truthful-evidence`, criada a partir de `main` em `e63c59b` (merge do PR #5; CI pós-merge: run `42384359803`, sucesso).
 - **Data:** 2026-11-07.
-- **Situação:** implementado e testado; PR aberto para revisão (merge só com autorização, por merge commit).
+- **Situação:** integrada na `main` pelo PR #6 (merge commit `9e1243d`). As correções da auditoria pós-merge entraram pelo PR #7 (merge commit `edf4de8`). Ver `SPRINT4-4-AUDITORIA-POS-MERGE.md`.
 - **Origem:** `SPRINT4-4-PLANEJAMENTO.md`, aprovado pelo usuário com as decisões recomendadas D1–D4.
 
 ## 1. Objetivo

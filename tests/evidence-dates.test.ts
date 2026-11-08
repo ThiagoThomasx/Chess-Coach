@@ -130,3 +130,13 @@ describe('re-dating evidence stored before Sprint 4.4', () => {
     expect((await db.skillEvents.toArray())[0]?.at).toBe(5);
   });
 });
+
+describe('calendar day of evidence in the charts (Sprint 4.5, P3-1)', () => {
+  it('game evidence is read on its UTC calendar day; other evidence on the local day', async () => {
+    const { evidenceDayKey, dayKey } = await import('../src/services/stats/stats');
+    expect(evidenceDayKey({ at: Date.UTC(2025, 0, 10), source: 'game' })).toBe('2025-01-10');
+    expect(evidenceDayKey({ at: Date.UTC(2025, 11, 31), source: 'game' })).toBe('2025-12-31');
+    const t = Date.UTC(2025, 0, 10, 15);
+    expect(evidenceDayKey({ at: t, source: 'exercise' })).toBe(dayKey(t));
+  });
+});

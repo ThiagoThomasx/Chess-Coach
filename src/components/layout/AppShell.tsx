@@ -6,6 +6,7 @@ import { BarChart3, BookOpen, Crown, Gauge, Library, Settings2, Target } from 'l
 import { useEngine } from '../../hooks/useEngine';
 import { getDb } from '../../db/database';
 import { isDueReview } from '../../services/scheduling/srs';
+import { useMinute } from '../../hooks/useMinute';
 
 const ENGINE_LABEL = {
   idle: 'Motor em espera',
@@ -19,12 +20,14 @@ export function AppShell() {
   const { engine, state } = useEngine();
   const location = useLocation();
   // Same rule as the dashboard: only exercises already attempted whose review is due (new ones are not reviews).
+  // Re-counted every minute too: a review that becomes due while the app stays open shows up (Sprint 4.5, C3).
+  const minute = useMinute();
   const due = useLiveQuery(
     () => {
       const now = Date.now();
       return getDb().exercises.where('srs.dueAt').belowOrEqual(now).filter((e) => isDueReview(e.srs, now)).count();
     },
-    [],
+    [minute],
     0,
   );
   const links = [

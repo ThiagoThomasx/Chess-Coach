@@ -222,15 +222,21 @@ export function nextTraining(input: TrainingInput): Recommendation {
     };
   }
   const weak = input.profile.filter((p) => p.confidence === 'insufficient');
+  // Only old evidence is not a weakness: it asks for a fresh measurement, not for review (decision D-4 B).
+  const noRecent = input.profile.filter((p) => p.confidence === 'no_recent');
   if (input.games.length === 0) {
     return { kind: 'explore', title: 'Analise uma partida', message: 'Você já importou partidas. Analise uma delas para identificar seus erros e gerar exercícios.', evidence: [], action: { label: 'Ver partidas', to: '/games' } };
   }
   return {
     kind: 'explore',
     title: 'Ampliar o diagnóstico',
-    message: weak.length
-      ? `Ainda há poucas evidências em: ${weak.map((w) => SKILL_LABEL[w.skill]).join(', ')}. Resolva exercícios ou analise mais partidas para refinar o perfil.`
-      : 'Nenhum padrão de erro recorrente foi encontrado até agora. Continue analisando partidas e resolvendo exercícios.',
+    message:
+      [
+        weak.length ? `Ainda há poucas evidências em: ${weak.map((w) => SKILL_LABEL[w.skill]).join(', ')}. Resolva exercícios ou analise mais partidas para refinar o perfil.` : '',
+        noRecent.length ? `Sem evidência recente em: ${noRecent.map((w) => SKILL_LABEL[w.skill]).join(', ')}. O diagnóstico histórico continua no perfil; resolva exercícios dessas competências para medir como você está agora.` : '',
+      ]
+        .filter(Boolean)
+        .join(' ') || 'Nenhum padrão de erro recorrente foi encontrado até agora. Continue analisando partidas e resolvendo exercícios.',
     evidence: [],
     action: { label: 'Ir para o treino', to: '/train' },
   };
