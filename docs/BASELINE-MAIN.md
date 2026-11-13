@@ -1,11 +1,11 @@
-# Baseline da `main` — pós-integração das Sprints 4.3 e 4.4
+# Baseline da `main` — pós-integração da Sprint 4.5
 
 | Campo | Valor |
 |---|---|
-| Commit de referência | `edf4de89c049bccbdf12c7b63bcc10aaec238e3c` (`origin/main`, merge do PR #7) |
-| Data | 2026-11-07 (atualizada na Sprint 4.5; a baseline anterior auditava `d49f797`) |
-| CI do commit | run `42396932386`, check `verify`: sucesso |
-| Auditorias desta base | `SPRINT4-3-AUDITORIA-POS-MERGE.md`, `SPRINT4-4-AUDITORIA-POS-MERGE.md` (aprovadas com ressalvas) e `SPRINT4-5-PLANEJAMENTO-AUDITORIA.md` |
+| Commit de referência | `302f7a9f4c9d202fec99e2fa455e884693a8970b` (`origin/main`, merge do PR #8) |
+| Data | 2026-11-08. Atualizada na auditoria pós-Sprint 4.5, porque a versão anterior descrevia `edf4de8` (antes do PR #8) com 370/21/53 testes |
+| CI do commit | run `42444231825`, check `verify`: sucesso |
+| Auditorias desta base | `SPRINT4-5-AUDITORIA-INDEPENDENTE.md`, `SPRINT4-5-AUDITORIA-FINAL-PRE-MERGE.md` e `POST-SPRINT4-5-AUDITORIA.md` (anteriores: `SPRINT4-3-AUDITORIA-POS-MERGE.md`, `SPRINT4-4-AUDITORIA-POS-MERGE.md`) |
 
 Legenda: **[F]** fato verificado no repositório/GitHub · **[E]** resultado de execução · **[I]** inferência.
 
@@ -23,6 +23,7 @@ Legenda: **[F]** fato verificado no repositório/GitHub · **[E]** resultado de 
 | #5 | `feat/sprint4-3-reliable-training-loop` | `e63c59b` | 2026-11-07 15:01 | sucesso |
 | #6 | `feat/sprint4-4-truthful-evidence` | `9e1243d` | 2026-11-07 16:45 | sucesso |
 | #7 | `fix/sprint4-4-audit-p2` | `edf4de8` | 2026-11-07 17:33 | sucesso |
+| #8 | `feat/sprint4-5-consistent-profile` | `302f7a9` | 2026-11-08 03:48 | sucesso |
 
 - **[F]** A árvore de cada merge de PR é idêntica à cabeça da branch integrada (sem resolução de conflito oculta).
 - **[F]** As branches de origem estão contidas em `origin/main` e foram mantidas.
@@ -59,19 +60,19 @@ Arquivos do motor (SHA-256, idênticos aos de `node_modules/stockfish/bin`):
 
 ## 5. Resultado dos testes [E]
 
-Executados numa worktree isolada em `edf4de8`, com `npm ci` (validação pós-merge do PR #7). A CI do push no mesmo SHA deu o mesmo resultado.
+Executados na `main` em `302f7a9`, com `npm ci` (auditoria pós-Sprint 4.5). A CI do push no mesmo SHA deu o mesmo resultado.
 
 | Verificação | Comando | Resultado |
 |---|---|---|
-| Arquivos do motor | `cmp` com `node_modules/stockfish/bin` | idênticos |
+| Arquivos do motor | SHA-256 contra `node_modules/stockfish/bin` | idênticos |
 | Typecheck | `npm run typecheck` | ok |
-| Vitest | `npx vitest run` (equivale a `npm test`) | **370/370** (23 arquivos) |
-| Stockfish real isolado | `npm run test:engine` | **21/21** (também passa na suíte completa) |
-| Cobertura (`src/services`, `src/db`) | `npm run coverage` (mesma árvore, em `ff233c4`) | linhas 93,62% · statements 90,06% · branches 82,73% · funções 86,59% |
+| Vitest | `npx vitest run` (equivale a `npm test`) | **401/401** (24 arquivos) |
+| Stockfish real isolado | `npx vitest run tests/engine-integration.test.ts` | **23/23** (também passa na suíte completa) |
+| Cobertura (`src/services`, `src/db`) | `npm run coverage` | linhas 93,77% · statements 90,30% · branches 83,09% · funções 87,22% |
 | Build | `npm run build` | ok |
-| Playwright | `npm run test:e2e` (porta dedicada 4176) | **53/53** |
+| Playwright | `npx playwright test` (porta dedicada 4176) | **59/59** |
 
-Evolução desde a baseline anterior (`d49f797`): 322 → 370 no Vitest, 47 → 53 no Playwright, motor real 21.
+Evolução: 322 → 370 → 401 no Vitest, 47 → 53 → 59 no Playwright, motor real 21 → 23.
 
 ## 6. Persistência
 
@@ -82,7 +83,7 @@ Evolução desde a baseline anterior (`d49f797`): 322 → 370 no Vitest, 47 → 
 
 ## 7. Débitos conhecidos
 
-| # | Item | Situação em `edf4de8` |
+| # | Item | Situação em `302f7a9` |
 |---|---|---|
 | 1 | Contador "Revisões pendentes" limitado a 5 posições marcadas | **Resolvido** (Sprint 4.3) |
 | 2 | Exercício usa limites de classificação atuais; análises usaram os da época | Aberto (postergar: muda o formato dos dados) |
@@ -92,12 +93,12 @@ Evolução desde a baseline anterior (`d49f797`): 322 → 370 no Vitest, 47 → 
 | 6 | E2E local reaproveitava servidor na 4173 | **Resolvido** (Sprint 4.3: porta 4176, `reuseExistingServer: false`) |
 | 7 | Sem ESLint | Aberto (dependência nova: só com decisão do usuário) |
 
-Débitos e achados posteriores, com priorização, estão em `SPRINT4-5-PLANEJAMENTO-AUDITORIA.md` §10.
+Débitos e achados posteriores, com priorização, estão em `POST-SPRINT4-5-AUDITORIA.md` §5–6. Resumo: FA-2 a FA-6 (P3) continuam abertos; há um P2 novo de desempenho (PA-1); não há P0 nem P1.
 
 ## 8. Ressalvas da baseline
 
 1. **[F]** Os itens 2, 3, 4 e 7 continuam abertos e estão no backlog.
-2. **[F]** Os achados da auditoria de planejamento da Sprint 4.5 (exclusão de partida mantendo evidências, tendência misturando tipos, falso "Precisa revisar" com partidas antigas, tentativa recriando exercício removido, corrida com a troca de lado, contadores) são tratados na Sprint 4.5 (`SPRINT4-5-RELATORIO.md`).
+2. **[F]** Os achados da auditoria de planejamento da Sprint 4.5 foram tratados e integrados no PR #8 (`SPRINT4-5-RELATORIO.md`), junto com as correções AI-1 a AI-7, FA-1 e FA-7.
 
 ## 9. Limitações conhecidas
 
@@ -110,7 +111,7 @@ As do README continuam válidas: motor *lite*; SEE só na casa da troca; promoç
 3. `npm ci` — sem atualizar dependências por conveniência.
 4. Conferir os arquivos do motor (`public/engine/*.js|.wasm` não vazios e idênticos aos de `node_modules/stockfish/bin`).
 5. `npm run typecheck`, `npm test`, `npm run test:engine` (isolado e dentro da suíte, por causa do estado de hash do motor), `npm run coverage`, `npm run build`, `npm run test:e2e`.
-6. Comparar com esta baseline: 370 Vitest, 21 com motor real, 53 Playwright, cobertura ≥ 80% em todas as métricas. Toda redução precisa de justificativa.
+6. Comparar com esta baseline: 401 Vitest, 23 com motor real, 59 Playwright, cobertura ≥ 80% em todas as métricas. Toda redução precisa de justificativa.
 7. Mudança de schema: nunca editar um bloco `version()` existente; adicionar teste de upgrade a partir da versão anterior com dados reais de fixture; nunca rodar em banco real.
 8. Verificar ausência de chamadas de rede novas (`fetch`, XHR, WebSocket, `sendBeacon`, URLs).
 9. Teste em celular físico numa origem separada (configuração `chessquest-phone`, porta 4180), sem usar os dados reais de `localhost:5173`.
