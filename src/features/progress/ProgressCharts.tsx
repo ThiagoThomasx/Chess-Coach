@@ -1,6 +1,6 @@
 import { Bar, BarChart, Cell, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { MoveClass, Skill, SkillEvent } from '../../types/domain';
-import { estimateSkill } from '../../services/adaptation/skills';
+import { estimateSkill, isMeasurableEvidence } from '../../services/adaptation/skills';
 import { CLASS_LABEL } from '../../services/analysis/classify';
 import { evidenceDayKey } from '../../services/stats/stats';
 
@@ -40,7 +40,7 @@ export function ClassDistributionChart({ dist }: { dist: Record<MoveClass, numbe
 
 /** Posterior estimate of a skill recomputed at the end of each day with evidence. */
 export function SkillHistoryChart({ events, skill }: { events: readonly SkillEvent[]; skill: Skill }) {
-  const own = events.filter((e) => e.skill === skill).sort((a, b) => a.at - b.at);
+  const own = events.filter((e) => e.skill === skill && isMeasurableEvidence(e)).sort((a, b) => a.at - b.at);
   const days = [...new Set(own.map((e) => evidenceDayKey(e)))].sort();
   const data = days.map((d) => {
     const upto = own.filter((e) => evidenceDayKey(e) <= d);

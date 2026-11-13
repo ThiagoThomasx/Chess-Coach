@@ -41,11 +41,18 @@ export interface ClassifyResult {
 /** Mover's win expectancy at or below which the position counts as already lost. */
 export const LOST_WIN_PERCENT = 5;
 
+/**
+ * Mover's win expectancy from which the advantage is decisive (the "winning" standing, the
+ * "vantagem decisiva" band of the refutation). A move that keeps it neither fails a conversion
+ * exercise nor counts as a serious error in the game trend (Sprint 4.7, PD-2).
+ */
+export const DECISIVE_WIN_PERCENT = 80;
+
 /** Positional state buckets on mover's win expectancy. */
 export type Standing = 'winning' | 'advantage' | 'equal' | 'worse' | 'losing';
 
 export function standingOf(win: number): Standing {
-  if (win >= 80) return 'winning';
+  if (win >= DECISIVE_WIN_PERCENT) return 'winning';
   if (win >= 60) return 'advantage';
   if (win > 40) return 'equal';
   if (win > 20) return 'worse';
@@ -119,7 +126,7 @@ export function classifyMove(input: ClassifyInput): ClassifyResult {
     classification = winBefore <= LOST_WIN_PERCENT ? 'inaccuracy' : 'blunder';
   } else if (hadMate && !keepsMate) {
     // Missing a forced mate: severity depends on what is left.
-    classification = winAfter >= 80 ? 'inaccuracy' : winAfter >= 60 ? 'mistake' : 'blunder';
+    classification = winAfter >= DECISIVE_WIN_PERCENT ? 'inaccuracy' : winAfter >= 60 ? 'mistake' : 'blunder';
   } else if (hadMate && keepsMate) {
     // Still mating, just slower: never worse than "good".
     classification = 'good';

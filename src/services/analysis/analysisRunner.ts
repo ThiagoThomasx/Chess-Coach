@@ -5,7 +5,7 @@ import { dbEvalCache, getAnalysis, listCompleteAnalyses, replaceGameSkillEvents,
 import { progressSaver } from './progressSaver';
 import { getDb } from '../../db/database';
 import { addExercise, listExercises } from '../../db/trainingRepo';
-import { acceptsPlayedMove, buildExercise, selectExercisePositions, withSolutionTree } from '../exercises/generate';
+import { buildExercise, noErrorToTrain, selectExercisePositions, withSolutionTree } from '../exercises/generate';
 import { eventsFromGame } from '../adaptation/skills';
 import { gameEvidenceTime } from '../games/gameDate';
 
@@ -169,8 +169,9 @@ export async function deriveFromAnalysis(game: Game, a: GameAnalysis, settings: 
     const complete = await completeExercise(ex, settings, engine);
     // Building the tree takes time: stop if the color changed (or the game was deleted) meanwhile.
     if ((await getGame(game.id))?.userColor !== game.userColor) break;
-    // A deeper search (the tree) accepts the move played: it was not an error (Sprint 4.4, O1; audit A5-1).
-    if (acceptsPlayedMove(complete, r.uci, before.depth)) continue;
+    // A deeper search (the tree) accepts the move played (Sprint 4.4, O1; audit A5-1), or the move already
+    // met the goal, e.g. kept a decisive advantage (Sprint 4.7, PD-2): no error to train.
+    if (noErrorToTrain(complete, r, before.depth)) continue;
     // The color is checked again in the write's own transaction: a switch cannot land in between (Sprint 4.5, C1).
     const saved = await addExercise(complete, { gameId: game.id, color: game.userColor });
     if (saved.colorChanged) break;

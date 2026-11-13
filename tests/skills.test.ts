@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { estimateSkill, estimateProfile, exerciseOutcome, eventsFromAttempt, targetDifficulty, eventsFromGame, hasPointEstimate } from '../src/services/adaptation/skills';
-import { nextTraining, errorThemes } from '../src/services/recommendations/recommend';
+import { estimateSkill, estimateProfile, exerciseOutcome, eventsFromAttempt, targetDifficulty, eventsFromGame, hasPointEstimate, GAME_SUCCESS_SKILLS } from '../src/services/adaptation/skills';
+import { detectConcepts, skillOf, THEME_SKILL } from '../src/services/pedagogy/concepts';
+import { nextTraining, errorThemes, trainThemeHref } from '../src/services/recommendations/recommend';
+import { matchesThemeFilter } from '../src/services/recommendations/themeEvidence';
+import { mkExercise } from './support/training';
 import { applyUci } from '../src/services/chess/position';
 import { DAY_MS } from '../src/services/scheduling/srs';
-import type { Exercise, MoveReview, SkillEvent } from '../src/types/domain';
+import type { Exercise, MoveReview, SkillEvent, Theme } from '../src/types/domain';
 
 const NOW = 100 * DAY_MS;
 const ev = (outcome: number, i: number, over: Partial<SkillEvent> = {}): SkillEvent => ({ skill: 'tactics', at: NOW - (100 - i) * 1000, outcome, weight: 1, independent: outcome === 1, difficulty: 2, source: 'exercise', ref: {}, ...over });
@@ -210,6 +213,19 @@ describe('recommendations', () => {
     expect(events.some((e) => e.skill === 'patterns')).toBe(false);
   });
 
+  it('"Treinar este tema" opens the exercises of the same side of the motif (Sprint 4.7, PD-3)', () => {
+    const rec = nextTraining({ games: forkGames, dueReviews: 0, totalGames: 2, profile: [] });
+    expect(rec.action.to).toBe('/train?theme=fork&side=opponent');
+    const allowed = mkExercise('o', { theme: 'fork', motifSide: 'opponent' });
+    const missed = mkExercise('m', { theme: 'fork', motifSide: 'own' });
+    const legacy = mkExercise('l', { theme: 'fork' }); // before motifSide: always the player's own tactic
+    expect([allowed, missed, legacy].filter((e) => matchesThemeFilter(e, 'fork', 'opponent')).map((e) => e.id)).toEqual(['o']);
+    expect([allowed, missed, legacy].filter((e) => matchesThemeFilter(e, 'fork', 'own')).map((e) => e.id)).toEqual(['m', 'l']);
+    expect([allowed, missed, legacy].filter((e) => matchesThemeFilter(e, 'fork')).map((e) => e.id)).toEqual(['o', 'm', 'l']);
+    // One-sided themes keep a plain theme link.
+    expect(trainThemeHref('hanging_piece', 'opponent')).toBe('/train?theme=hanging_piece');
+  });
+
   it('without a recurring pattern or due reviews, recommends a skill flagged for review with its numbers (Sprint 3)', () => {
     const weak = Array.from({ length: 10 }, (_, i) => ev(i % 5 === 0 ? 1 : 0, i, { skill: 'defense', ref: { exerciseId: `d${i}` } }));
     const profile = [estimateSkill('defense', weak, NOW)];
@@ -389,5 +405,47 @@ describe('the weak bound is measured on recent evidence (final audit FA-7)', () 
   it('a recent sample clearly below 50% asks for review even without a drop', () => {
     const s = estimateSkill('tactics', [...rep(20, 60, 0), ...rep(5, 2, 0), ...rep(1, 1, 1)], T);
     expect(s.confidence).toBe('needs_review');
+  });
+});
+
+describe('one-sided game evidence (Sprint 4.7, PD-1)', () => {
+  // 1.Qxd5?? exd5: a capture that loses the queen for a pawn (SEE −8, settled in the engine line).
+  const fenBefore = '4k3/8/4p3/3p4/8/8/8/3QK3 w - - 0 1';
+  const losingCapture: MoveReview = {
+    ply: 41, san: 'Qxd5', uci: 'd1d5', color: 'w', fenBefore, fenAfter: applyUci(fenBefore, 'd1d5')!, evalBefore: { kind: 'cp', value: 0 }, evalAfter: { kind: 'cp', value: -900 },
+    bestLine: ['e1e2'], winBefore: 50, winAfter: 3, winLoss: 47, classification: 'blunder', flags: ['material_loss'], depth: 16,
+  };
+  const replies = { 41: ['e6d5', 'e1e2'] };
+
+  it('games can only fail a skill they can also succeed in: a losing capture yields no "calculation" event', () => {
+    const concept = detectConcepts(losingCapture, replies[41])[0];
+    expect(concept?.theme).toBe('losing_capture');
+    expect(concept && skillOf(concept)).toBe('calculation');
+    const events = eventsFromGame('g', [losingCapture], replies, 'w', NOW);
+    expect(events.length).toBeGreaterThan(0); // the phase evidence stays
+    expect(events.some((e) => e.skill === 'calculation')).toBe(false);
+  });
+
+  it('every skill a game event can carry has a success path in games', () => {
+    expect(GAME_SUCCESS_SKILLS).not.toContain('calculation');
+    const reachable = new Set(Object.keys(THEME_SKILL).flatMap((t) => [skillOf({ theme: t as Theme, side: 'own' }), skillOf({ theme: t as Theme, side: 'opponent' })]));
+    for (const skill of reachable) {
+      if (!GAME_SUCCESS_SKILLS.includes(skill)) expect(skill).toBe('calculation');
+    }
+  });
+
+  it('game failures stored before the fix neither measure nor flag "calculation" (reproduction R2 of the post-4.6 audit)', () => {
+    const legacy: SkillEvent[] = Array.from({ length: 14 }, (_, i) => ({ skill: 'calculation', at: NOW - i * DAY_MS, outcome: 0, weight: 0.5, independent: true, source: 'game', ref: { gameId: `g${i}`, ply: 10 } }));
+    const s = estimateSkill('calculation', legacy, NOW);
+    expect(s.confidence).toBe('insufficient');
+    expect(s.level).toBeNull();
+    expect(s.events).toBe(0);
+    const rec = nextTraining({ games: [{ gameId: 'a', userColor: 'w', reviews: [], replyLines: {} }], dueReviews: 0, totalGames: 1, profile: estimateProfile(legacy, NOW) });
+    expect(rec.kind).not.toBe('skill');
+  });
+
+  it('exercises still measure "calculation", in both directions', () => {
+    const fails = Array.from({ length: 10 }, (_, i) => ev(0, i, { skill: 'calculation', ref: { exerciseId: `c${i}` } }));
+    expect(estimateSkill('calculation', fails, NOW).confidence).toBe('needs_review');
   });
 });

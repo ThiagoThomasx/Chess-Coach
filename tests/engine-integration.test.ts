@@ -1,10 +1,8 @@
 // Runs the real Stockfish 19 WASM build (the same file the app serves) in Node.
 import 'fake-indexeddb/auto';
-import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it, afterAll } from 'vitest';
-import { UciEngine, type EngineTransport } from '../src/services/engine/UciEngine';
+import { UciEngine } from '../src/services/engine/UciEngine';
+import { nodeTransport } from './support/nodeEngine';
 import { analyzeGame, reviewMove } from '../src/services/analysis/gameAnalyzer';
 import { replayGame, uciLineToSan, uciToSan } from '../src/services/chess/position';
 import { explainMove } from '../src/services/pedagogy/explain';
@@ -21,22 +19,6 @@ import { getGame, importPgn, setUserColor } from '../src/db/gamesRepo';
 import { DEFAULT_SETTINGS } from '../src/db/settings';
 import { deriveFromAnalysis } from '../src/services/analysis/analysisRunner';
 import type { GameAnalysis } from '../src/types/domain';
-
-const BRIDGE = fileURLToPath(new URL('./support/sf-bridge.cjs', import.meta.url));
-
-function nodeTransport(): EngineTransport {
-  const child = spawn(process.execPath, [BRIDGE], { stdio: ['pipe', 'pipe', 'inherit'] });
-  const listeners: ((l: string) => void)[] = [];
-  const errors: ((e: Error) => void)[] = [];
-  createInterface({ input: child.stdout }).on('line', (l) => listeners.forEach((fn) => fn(l)));
-  child.on('error', (e) => errors.forEach((fn) => fn(e)));
-  return {
-    send: (c) => child.stdin.write(`${c}\n`),
-    onLine: (fn) => listeners.push(fn),
-    onError: (fn) => errors.push(fn),
-    terminate: () => child.kill(),
-  };
-}
 
 const engine = new UciEngine(nodeTransport);
 afterAll(() => engine.terminate());

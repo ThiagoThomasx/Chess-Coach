@@ -55,6 +55,21 @@ export function eventsFromAttempt(ex: Exercise, a: Attempt): SkillEvent[] {
 
 const PHASE_SKILL = { opening: 'openings', middlegame: 'strategy', endgame: 'endgames' } as const;
 
+/**
+ * Skills a game move can show both failing and succeeding in (Sprint 4.7, PD-1): the phase skills
+ * (every move counts, either way) and the ones with a success rule below. A game can show a
+ * calculation error (a losing capture, a missed deflection) but never a calculation success, so a
+ * series of game moves would be failures only and look like a weakness whatever the player's
+ * level: such evidence is not recorded, and evidence stored before is ignored (`isMeasurableEvidence`).
+ * Exercises still measure every skill.
+ */
+export const GAME_SUCCESS_SKILLS: readonly Skill[] = ['openings', 'strategy', 'endgames', 'tactics', 'patterns', 'defense', 'threats'];
+
+/** Evidence that can enter a success-rate estimate: everything but game evidence of a skill games only fail. */
+export function isMeasurableEvidence(e: Pick<SkillEvent, 'skill' | 'source'>): boolean {
+  return e.source !== 'game' || GAME_SUCCESS_SKILLS.includes(e.skill);
+}
+
 function phaseOutcome(c: MoveReview['classification']): number | null {
   if (c === 'best' || c === 'excellent' || c === 'good') return 1;
   if (c === 'inaccuracy') return 0.5;
@@ -80,7 +95,8 @@ export function eventsFromGame(gameId: string, reviews: readonly MoveReview[], r
 
     if (o === 0) {
       const c = detectConcepts(r, replyLines[r.ply] ?? [])[0];
-      if (c && c.verified) events.push(ev(skillOf(c), 0, WEIGHTS.gameConcept));
+      const skill = c && c.verified ? skillOf(c) : undefined;
+      if (skill && GAME_SUCCESS_SKILLS.includes(skill)) events.push(ev(skill, 0, WEIGHTS.gameConcept));
       continue;
     }
     // Successes: only when the position offered a verifiable opportunity or threat.
@@ -211,7 +227,7 @@ export function targetDifficulty(events: readonly SkillEvent[]): number {
  * normal approximation of the Beta posterior. No rating is inferred.
  */
 export function estimateSkill(skill: Skill, all: readonly SkillEvent[], now: number): SkillEstimate {
-  const events = all.filter((e) => e.skill === skill).sort((a, b) => a.at - b.at);
+  const events = all.filter((e) => e.skill === skill && isMeasurableEvidence(e)).sort((a, b) => a.at - b.at);
   const target = targetDifficulty(events);
   if (events.length === 0) {
     return { skill, level: null, interval: null, evidence: 0, events: 0, recentRate: null, independentRate: null, assistedRate: null, trend: 'unknown', confidence: 'insufficient', targetDifficulty: target };

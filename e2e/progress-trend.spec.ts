@@ -62,7 +62,7 @@ test('recent games with fewer serious errors are shown as an improvement, with b
   const trend = page.getByTestId('game-trend');
   await expect(page.getByTestId('game-trend-recent')).toHaveText('1,00');
   await expect(page.getByTestId('game-trend-previous')).toHaveText('3,00');
-  await expect(page.getByTestId('game-trend-direction')).toHaveText('Menos erros graves por partida.');
+  await expect(page.getByTestId('game-trend-direction')).toHaveText('Menos erros sérios por partida.');
   await expect(page.getByTestId('game-trend-sample')).toContainText('últimas 10 vs. 10 partidas anteriores');
   await expect(trend).toContainText('Últimas 10 partidas');
   await expect(page.getByText('Análises feitas por dia')).toHaveCount(0);
@@ -78,7 +78,7 @@ test('a difference below 0.3 errors per game is reported as stable', async ({ pa
 test('with 3 games per group, a one-error change is shown without the improvement color and flagged as a small sample (review M1)', async ({ page }) => {
   await seed(page, Array.from({ length: 6 }, (_, i) => seeded(i + 1, i === 5 ? 2 : 1)));
   const direction = page.getByTestId('game-trend-direction');
-  await expect(direction).toHaveText('Mais erros graves por partida.');
+  await expect(direction).toHaveText('Mais erros sérios por partida.');
   await expect(direction).not.toHaveClass(/tag-bad|tag-good/);
   await expect(page.getByTestId('game-trend-small-sample')).toContainText('Amostra pequena');
 });
@@ -102,6 +102,6 @@ test('undated games in the comparison are disclosed and the direction loses its 
   const undated = [seeded(28, 0), seeded(29, 0)].map((r) => ({ ...r, game: { ...r.game, headers: { ...r.game.headers, date: '????.??.??' } } }));
   await seed(page, [...rows, ...undated]);
   await expect(page.getByTestId('game-trend-undated')).toHaveText('2 partidas comparadas não têm data no PGN e entram como as mais antigas. Se foram jogadas há pouco, a direção pode estar invertida.');
-  await expect(page.getByTestId('game-trend-direction')).toHaveText('Mais erros graves por partida.');
+  await expect(page.getByTestId('game-trend-direction')).toHaveText('Mais erros sérios por partida.');
   await expect(page.getByTestId('game-trend-direction')).toHaveClass('tag');
 });

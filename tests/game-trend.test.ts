@@ -123,3 +123,16 @@ describe('undated games in the comparison (audit AC-5)', () => {
     expect(seriousErrorTrend([game(undefined, 2), ...series([1, 1, 1, 1, 1, 1])])).toMatchObject({ window: 3, undatedGames: 0 });
   });
 });
+
+describe('a move that keeps a decisive advantage is not a serious error (Sprint 4.7, PD-2, user decision)', () => {
+  const withWin = (g: AnalyzedGameInput, winAfter: number): AnalyzedGameInput => ({ ...g, reviews: g.reviews.map((r) => ({ ...r, winAfter })) });
+
+  it('+12 → +5 (86% after the move) leaves the count; 79% after the move stays in it', () => {
+    const kept = Array.from({ length: 6 }, (_, i) => withWin(game(i + 1, i < 3 ? 0 : 2), 86));
+    const t = seriousErrorTrend(kept);
+    expect(t.kind === 'compared' && [t.previous, t.recent]).toEqual([0, 0]);
+    const lost = Array.from({ length: 6 }, (_, i) => withWin(game(i + 1, i < 3 ? 0 : 2), 79));
+    const u = seriousErrorTrend(lost);
+    expect(u.kind === 'compared' && [u.previous, u.recent]).toEqual([0, 2]);
+  });
+});
