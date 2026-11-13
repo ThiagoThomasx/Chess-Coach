@@ -123,3 +123,31 @@ describe('undated games in the comparison (audit AC-5)', () => {
     expect(seriousErrorTrend([game(undefined, 2), ...series([1, 1, 1, 1, 1, 1])])).toMatchObject({ window: 3, undatedGames: 0 });
   });
 });
+
+describe('a move that keeps a decisive advantage is not a serious error (Sprint 4.7, PD-2, user decision)', () => {
+  const withWin = (g: AnalyzedGameInput, winAfter: number): AnalyzedGameInput => ({ ...g, reviews: g.reviews.map((r) => ({ ...r, winAfter })) });
+
+  it('+12 → +5 (86% after the move) leaves the count; 79% after the move stays in it', () => {
+    const kept = Array.from({ length: 6 }, (_, i) => withWin(game(i + 1, i < 3 ? 0 : 2), 86));
+    const t = seriousErrorTrend(kept);
+    expect(t.kind === 'compared' && [t.previous, t.recent]).toEqual([0, 0]);
+    const lost = Array.from({ length: 6 }, (_, i) => withWin(game(i + 1, i < 3 ? 0 : 2), 79));
+    const u = seriousErrorTrend(lost);
+    expect(u.kind === 'compared' && [u.previous, u.recent]).toEqual([0, 2]);
+  });
+});
+
+describe('the 80% boundary of a serious error (Sprint 4.7, closing review L4)', () => {
+  it('exactly 80% after the move is a kept advantage; just below it is a serious error', () => {
+    const at = (winAfter: number) => {
+      const games = Array.from({ length: 6 }, (_, i) => {
+        const g = game(i + 1, i < 3 ? 0 : 1);
+        return { ...g, reviews: g.reviews.map((r) => ({ ...r, winAfter })) };
+      });
+      const t = seriousErrorTrend(games);
+      return t.kind === 'compared' ? t.recent : null;
+    };
+    expect(at(80)).toBe(0);
+    expect(at(79.999)).toBe(1);
+  });
+});

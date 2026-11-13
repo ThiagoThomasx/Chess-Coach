@@ -4,8 +4,8 @@ import { TREND_MIN_GAMES, TREND_THRESHOLD, type SeriousErrorTrend } from '../../
 type Props = { trend: SeriousErrorTrend };
 
 const DIRECTION = {
-  better: { text: 'Menos erros graves por partida.', cls: 'tag tag-good', Icon: TrendingDown },
-  worse: { text: 'Mais erros graves por partida.', cls: 'tag tag-bad', Icon: TrendingUp },
+  better: { text: 'Menos erros sérios por partida.', cls: 'tag tag-good', Icon: TrendingDown },
+  worse: { text: 'Mais erros sérios por partida.', cls: 'tag tag-bad', Icon: TrendingUp },
   stable: { text: 'Estável em relação às partidas anteriores.', cls: 'tag', Icon: Minus },
 } as const;
 
@@ -17,9 +17,9 @@ export function GameTrend({ trend }: Props) {
     <section className="panel" aria-labelledby="game-trend-title" data-testid="game-trend">
       <div className="panel-head">
         <h2 id="game-trend-title">Minhas partidas estão melhorando?</h2>
-        <span className="xs faint">Erros graves por partida</span>
+        <span className="xs faint">Erros sérios por partida</span>
       </div>
-      <p className="xs muted">Conta os seus lances classificados como Erro ou Erro grave, por partida analisada com a sua cor definida, na ordem da data da partida.</p>
+      <p className="xs muted">Erro sério: um lance seu classificado como Erro ou Erro grave, exceto quando manteve a vantagem decisiva (expectativa de vitória de 80% ou mais depois dele). Esse lance continua marcado como erro na análise e conta no perfil, mas não muda o resultado da partida. Contado por partida analisada com a sua cor definida, na ordem da data da partida.</p>
       {trend.kind === 'insufficient' ? (
         <p className="small muted" style={{ marginTop: '0.6rem' }} data-testid="game-trend-insufficient">
           Sem partidas suficientes: a comparação precisa de pelo menos {TREND_MIN_GAMES} partidas analisadas com a sua cor definida (há {trend.games}).
@@ -43,12 +43,12 @@ function TrendComparison({ trend }: { trend: Extract<SeriousErrorTrend, { kind: 
         <div className="stat">
           <span className="stat-label">{trend.previousGames} partidas anteriores</span>
           <span className="stat-value" data-testid="game-trend-previous">{fmt(trend.previous)}</span>
-          <span className="stat-note">erros graves por partida</span>
+          <span className="stat-note">erros sérios por partida</span>
         </div>
         <div className="stat">
           <span className="stat-label">Últimas {trend.recentGames} partidas</span>
           <span className="stat-value" data-testid="game-trend-recent">{fmt(trend.recent)}</span>
-          <span className="stat-note">erros graves por partida</span>
+          <span className="stat-note">erros sérios por partida</span>
         </div>
       </div>
       <p className="row small" style={{ gap: '0.5rem' }}>

@@ -10,6 +10,8 @@ import { MiniBoard } from './MiniBoard';
 import type { Attempt, Exercise, Skill, Theme } from '../../types/domain';
 import { estimateProfile, SKILL_LABEL } from '../../services/adaptation/skills';
 import { useMinute } from '../../hooks/useMinute';
+import { matchesThemeFilter } from '../../services/recommendations/themeEvidence';
+import { patternLabel } from '../../services/recommendations/recommend';
 
 type Status = 'all' | 'due' | 'new' | 'failed' | 'mastered' | 'recommended';
 
@@ -35,6 +37,9 @@ export function TrainingPage() {
 
   const status = (params.get('filter') as Status | null) ?? 'all';
   const theme = (params.get('theme') as Theme | null) ?? '';
+  // Side of a two-sided motif, set by the "Treinar este tema" link of a recommendation (Sprint 4.7, PD-3).
+  const sideParam = params.get('side');
+  const side = theme && (sideParam === 'own' || sideParam === 'opponent') ? sideParam : undefined;
   const difficulty = Number(params.get('difficulty') ?? 0);
   const source = params.get('source') ?? '';
   const skill = (params.get('skill') as Skill | null) ?? '';
@@ -57,9 +62,18 @@ export function TrainingPage() {
     setParams(next, { replace: true });
   };
 
+  // Choosing a theme by hand drops the side the recommendation link carried.
+  const setTheme = (v: string) => {
+    const next = new URLSearchParams(params);
+    if (v) next.set('theme', v);
+    else next.delete('theme');
+    next.delete('side');
+    setParams(next, { replace: true });
+  };
+
   const matches = (e: Exercise): boolean => {
     const last = lastAttempt(byExercise.get(e.id));
-    if (theme && e.theme !== theme) return false;
+    if (theme && !matchesThemeFilter(e, theme, side)) return false;
     if (difficulty && e.difficulty !== difficulty) return false;
     if (source && e.source !== source) return false;
     if (skill && e.skill !== skill) return false;
@@ -116,7 +130,7 @@ export function TrainingPage() {
           </label>
           <label className="field">
             <span>Tema</span>
-            <select className="select" value={theme} onChange={(e) => set('theme', e.target.value)}>
+            <select className="select" value={theme} onChange={(e) => setTheme(e.target.value)} data-testid="filter-theme">
               <option value="">Todos</option>
               {themes.map((t) => (
                 <option key={t} value={t}>
@@ -124,6 +138,11 @@ export function TrainingPage() {
                 </option>
               ))}
             </select>
+            {side && theme && (
+              <span className="xs muted" data-testid="theme-side">
+                Só: {patternLabel(theme, side).toLowerCase()}
+              </span>
+            )}
           </label>
           <label className="field">
             <span>Competência</span>

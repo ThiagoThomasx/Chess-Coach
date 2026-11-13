@@ -3,6 +3,7 @@ import { matchOpening } from '../openings/library';
 import { errorThemes, recentGames, type AnalyzedGameInput, type ErrorPattern } from '../recommendations/recommend';
 import { replyLinesOf } from '../analysis/gameAnalyzer';
 import { gameTime, isUtcCalendarDate } from '../games/gameDate';
+import { DECISIVE_WIN_PERCENT } from '../analysis/classify';
 
 export { gameTime };
 
@@ -111,7 +112,13 @@ export type SeriousErrorTrend =
       undatedGames: number;
     };
 
-const seriousErrors = (g: AnalyzedGameInput): number => g.reviews.filter((r) => r.color === g.userColor && (r.classification === 'mistake' || r.classification === 'blunder')).length;
+/**
+ * The user's mistakes and blunders, except moves that kept a decisive advantage (≥ DECISIVE_WIN_PERCENT
+ * after the move): near 100% win% saturates, and +12 → +5 is labelled an error without changing the
+ * result of the game (Sprint 4.7, PD-2, user decision). The analysis keeps its label.
+ */
+const seriousErrors = (g: AnalyzedGameInput): number =>
+  g.reviews.filter((r) => r.color === g.userColor && (r.classification === 'mistake' || r.classification === 'blunder') && !(r.winAfter >= DECISIVE_WIN_PERCENT)).length;
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
 
 /**

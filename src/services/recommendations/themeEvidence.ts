@@ -15,6 +15,16 @@ export function exercisePatternKey(ex: Pick<Exercise, 'theme' | 'motifSide'>): s
   return patternKey(ex.theme, ex.motifSide ?? 'own');
 }
 
+/**
+ * Filter of the training list by theme and, for two-sided motifs, by side (Sprint 4.7, PD-3): a
+ * recommendation about the opponent's forks must not open "find the fork" exercises. Without a side,
+ * every exercise of the theme matches, as before.
+ */
+export function matchesThemeFilter(ex: Pick<Exercise, 'theme' | 'motifSide'>, theme: Theme, side?: 'own' | 'opponent'): boolean {
+  if (ex.theme !== theme) return false;
+  return !side || !TWO_SIDED.includes(theme) || exercisePatternKey(ex) === patternKey(theme, side);
+}
+
 /** Only the most recent exercises of a pattern describe the current state. */
 export const RECENT_EXERCISES = 10;
 /** Below this many distinct exercises nothing is concluded (one exercise never moves a recommendation). */

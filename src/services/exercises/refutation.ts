@@ -2,6 +2,7 @@ import type { Color, Score } from '../../types/domain';
 import { uciLineToSan } from '../chess/position';
 import { settledSwing } from '../chess/material';
 import { winPercentFor } from '../analysis/evaluation';
+import { DECISIVE_WIN_PERCENT } from '../analysis/classify';
 
 /** Opponent plies shown after a rejected move (the reply and what follows). */
 export const REFUTATION_PLIES = 4;
@@ -51,7 +52,7 @@ const BAND_LABEL: Record<Band, string> = {
 const BAND_ORDER: readonly Band[] = ['lost', 'disadvantage', 'equal', 'advantage', 'decisive'];
 
 function bandOf(win: number): Band {
-  if (win >= 80) return 'decisive';
+  if (win >= DECISIVE_WIN_PERCENT) return 'decisive';
   if (win >= 60) return 'advantage';
   if (win > 40) return 'equal';
   if (win > 20) return 'disadvantage';

@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:engine": "vitest run tests/engine-integration",
+    "measure:pedagogy": "vitest run tests/measure --disableConsoleIntercept",
     "test:e2e": "playwright test",
     "postinstall": "node scripts/copy-engine.mjs",
     "coverage": "vitest run --coverage --coverage.include=src/services/** --coverage.include=src/db/** --coverage.reporter=text-summary"

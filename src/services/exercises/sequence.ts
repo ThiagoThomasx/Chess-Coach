@@ -2,6 +2,7 @@ import type { AcceptableMove, Color, Exercise, ExerciseGoal, ExerciseKind, Posit
 import { applyUci, sideToMove, terminalState, uciToSan } from '../chess/position';
 import { gainPlies, settledSwing } from '../chess/material';
 import { matedScore, winPercentFor } from '../analysis/evaluation';
+import { DECISIVE_WIN_PERCENT } from '../analysis/classify';
 import type { EngineLike } from '../analysis/gameAnalyzer';
 import { consequenceOf, refutationLine, type Refutation } from './refutation';
 
@@ -45,17 +46,32 @@ function mateFor(score: Score, side: Color): number | null {
 /**
  * Moves within `tolerance` win% of the best line, from the side to move's POV.
  * With `mateLimit`, only moves that keep a forced mate within that many moves
- * count (win% alone cannot tell mate in 2 from mate in 5).
+ * count (win% alone cannot tell mate in 2 from mate in 5). With `keepWin`, a
+ * move that keeps at least that win expectancy is accepted too (conversion).
  */
-export function acceptedFrom(a: PositionAnalysis, tolerance: number, mateLimit?: number): AcceptableMove[] {
+export function acceptedFrom(a: PositionAnalysis, tolerance: number, mateLimit?: number, keepWin?: number): AcceptableMove[] {
   const side = stm(a.fen);
   const best = a.lines[0];
   if (!best) return [];
   const bestWin = winPercentFor(best.score, side);
   return a.lines
-    .filter((l) => l.pv[0] && bestWin - winPercentFor(l.score, side) <= tolerance)
+    .filter((l) => l.pv[0] && (bestWin - winPercentFor(l.score, side) <= tolerance || keepsWin(l.score, side, keepWin)))
     .filter((l) => mateLimit === undefined || (mateFor(l.score, side) ?? Infinity) <= mateLimit)
     .map((l) => ({ uci: l.pv[0] as string, san: uciToSan(a.fen, l.pv[0] as string) ?? (l.pv[0] as string), score: l.score }));
+}
+
+/**
+ * Win expectancy a conversion asks the solver to keep (Sprint 4.7, PD-2): its objective is to keep the
+ * decisive advantage, so every move that keeps it solves it. Near 100% win% saturates, and the
+ * tolerance alone would reject a move from +12 to +5, still decisive, while the objective asked for
+ * exactly that. Other goals have no floor.
+ */
+export function keepWinOf(goal: Pick<ExerciseGoal, 'kind'>): number | undefined {
+  return goal.kind === 'conversion' ? DECISIVE_WIN_PERCENT : undefined;
+}
+
+function keepsWin(score: Score, side: Color, keepWin: number | undefined): boolean {
+  return keepWin !== undefined && winPercentFor(score, side) >= keepWin;
 }
 
 /**
@@ -125,7 +141,7 @@ export async function buildSolutionTree(engine: EngineLike, fen: string, goal: E
   const firstBudget = mateBudget(goal, 0);
   const node = async (pos: string, movesLeft: number, budget: number, isRoot: boolean): Promise<SolutionNode> => {
     const a = await engine.analyze({ fen: pos, depth: opts.depth, multiPv: opts.multiPv });
-    const found = acceptedFrom(a, opts.tolerance, isMate ? budget : undefined);
+    const found = acceptedFrom(a, opts.tolerance, isMate ? budget : undefined, keepWinOf(goal));
     // Tied moves can come back reordered: keep the analysis main move first when it is still accepted.
     const accepted = isRoot && preferredFirst ? preferFirst(found, preferredFirst) : found;
     const out: SolutionNode = { fen: pos, accepted, replies: {}, depth: a.depth };
@@ -231,6 +247,8 @@ export interface SolveDeps {
   tolerance: number;
   /** Set internally for mate goals: solver moves left including the current one. */
   mateMovesLeft?: number;
+  /** Set internally for conversion goals: a move keeping this win expectancy is accepted (keepWinOf). */
+  keepWin?: number;
 }
 
 const randomPick = (n: number) => Math.floor(Math.random() * n);
@@ -314,7 +332,8 @@ async function judge(state: SolveState, uci: string, after: string, solver: Colo
   try {
     m = await measure(deps.depth);
     // Borderline: re-check deeper before calling a reasonable move wrong.
-    if (m && m.loss > deps.tolerance && m.loss <= deps.tolerance + UNCERTAIN_MARGIN) m = (await measure(deps.depth + RECHECK_EXTRA_DEPTH)) ?? m;
+    // A move that keeps the conversion floor is already accepted: no deeper re-check (review L3).
+    if (m && m.loss > deps.tolerance && m.loss <= deps.tolerance + UNCERTAIN_MARGIN && !keepsWin(m.score, solver, deps.keepWin)) m = (await measure(deps.depth + RECHECK_EXTRA_DEPTH)) ?? m;
   } catch {
     return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível verificar ${san} com o motor agora.` } };
   }
@@ -323,7 +342,7 @@ async function judge(state: SolveState, uci: string, after: string, solver: Colo
   if (deps.mateMovesLeft !== undefined && (m.mateMoves ?? Infinity) > deps.mateMovesLeft) {
     return { ok: false, verdict: { kind: 'rejected', message: `${san} não mantém o mate forçado dentro do limite do exercício.`, assessment } };
   }
-  if (m.loss <= deps.tolerance) return { ok: true, score: m.score, assessment };
+  if (m.loss <= deps.tolerance || keepsWin(m.score, solver, deps.keepWin)) return { ok: true, score: m.score, assessment };
   if (m.loss <= deps.tolerance + UNCERTAIN_MARGIN) {
     return {
       ok: false,
@@ -366,7 +385,8 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
 
   const limit = Math.min(ex.goal.maxUserMoves, MAX_SEQUENCE_MOVES);
   const isMate = ex.goal.kind === 'mate';
-  const judgeDeps = isMate ? { ...deps, mateMovesLeft: mateBudget(ex.goal, state.userMoves) } : deps;
+  const keepWin = keepWinOf(ex.goal);
+  const judgeDeps = isMate ? { ...deps, mateMovesLeft: mateBudget(ex.goal, state.userMoves) } : keepWin !== undefined ? { ...deps, keepWin } : deps;
   const verdict = await judge(state, uci, after, solver, judgeDeps);
   if (!verdict.ok) return verdict.verdict;
   const { assessment } = verdict;
@@ -397,7 +417,7 @@ export async function playSolverMove(ex: Exercise & { goal: ExerciseGoal }, stat
     const afterReply = applyUci(after, pick.uci) as string;
     if (terminalScore(afterReply)) return { kind: 'solved', assessment, message: `${san}${altNote} — correto!`, fen: afterReply, reply: { uci: pick.uci, san: pick.san } };
     const next = await deps.engine.analyze({ fen: afterReply, depth: deps.depth, multiPv: 3 });
-    const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, isMate ? mateBudget(ex.goal, userMoves) : undefined), replies: {}, depth: next.depth };
+    const node: SolutionNode = { fen: afterReply, accepted: acceptedFrom(next, deps.tolerance, isMate ? mateBudget(ex.goal, userMoves) : undefined, keepWin), replies: {}, depth: next.depth };
     return { kind: 'continue', assessment, message: `${san}${altNote} — correto. O adversário responde ${pick.san}.`, reply: { uci: pick.uci, san: pick.san }, state: { node, userMoves, fen: afterReply } };
   } catch {
     return { kind: 'solved', assessment, message: `${san}${altNote} — aceito. Não foi possível calcular a resposta do adversário agora.`, fen: after };

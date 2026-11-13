@@ -7,7 +7,7 @@ import { DEFAULT_THRESHOLDS } from '../analysis/classify';
 import { detectConcepts, skillOf } from '../pedagogy/concepts';
 import { newId } from '../../utils/hash';
 import { fenKey, type EngineLike } from '../analysis/gameAnalyzer';
-import { buildSolutionTree, goalFor, mainLine, type TreeOptions } from './sequence';
+import { buildSolutionTree, goalFor, keepWinOf, mainLine, type TreeOptions } from './sequence';
 
 export const DEFAULT_TOLERANCE = 5; // win% points
 
@@ -230,4 +230,25 @@ export async function withSolutionTree(ex: Exercise, engine: EngineLike, opts: T
 export function acceptsPlayedMove(ex: Pick<Exercise, 'tree'>, playedUci: string, analysedDepth: number): boolean {
   if (!ex.tree || ex.tree.depth <= analysedDepth) return false;
   return ex.tree.accepted.some((m) => m.uci === playedUci);
+}
+
+/**
+ * The move played already meets the exercise's goal, judged by the goal's own floor: a conversion
+ * built from a move that kept the decisive advantage would accept that very move (Sprint 4.7, PD-2).
+ * Goals without a floor (a hanging piece, a missed tactic) train a concrete fact and are kept.
+ */
+export function playedMeetsGoal(ex: Pick<Exercise, 'goal'>, playedWin: number): boolean {
+  const floor = ex.goal ? keepWinOf(ex.goal) : undefined;
+  return floor !== undefined && playedWin >= floor;
+}
+
+/**
+ * Why the move played is no error to train from this exercise, or null when it is one: a deeper
+ * search accepts it ('tree', Sprint 4.4) or it already meets the goal ('goal', Sprint 4.7, PD-2).
+ * The same rule for the automatic derivation and the manual "create exercise" (review M1).
+ */
+export function noErrorToTrain(ex: Pick<Exercise, 'goal' | 'tree'>, played: Pick<MoveReview, 'uci' | 'winAfter'>, analysedDepth: number): 'tree' | 'goal' | null {
+  if (acceptsPlayedMove(ex, played.uci, analysedDepth)) return 'tree';
+  if (playedMeetsGoal(ex, played.winAfter)) return 'goal';
+  return null;
 }

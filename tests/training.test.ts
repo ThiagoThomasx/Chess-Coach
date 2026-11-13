@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, isSacrifice, selectExercisePositions, acceptsPlayedMove } from '../src/services/exercises/generate';
+import { buildExercise, checkCandidate, acceptableMovesFrom, estimateDifficulty, isSacrifice, selectExercisePositions, acceptsPlayedMove, playedMeetsGoal, noErrorToTrain } from '../src/services/exercises/generate';
 import { validateStep, judgeWithEngine, hintFor, hintForNode, attemptResult, MAX_HINTS } from '../src/services/exercises/validate';
 import { exerciseOutcome } from '../src/services/adaptation/skills';
 import { nextSrs, outcomeOf, DAY_MS, RETRY_DELAY_MS } from '../src/services/scheduling/srs';
@@ -268,5 +268,37 @@ describe('the deeper tree overrules the analysis only when it is deeper (audit A
   it('without a tree (no engine) nothing is discarded; another move accepted does not count', () => {
     expect(acceptsPlayedMove({}, 'f3d4', 11)).toBe(false);
     expect(acceptsPlayedMove(tree(16), 'f1c4', 11)).toBe(false);
+  });
+});
+
+describe('the move played never solves its own exercise (Sprint 4.7, PD-2)', () => {
+  it('a conversion is not built from a move that kept the decisive advantage', () => {
+    const conversion = { goal: { kind: 'conversion' as const, maxUserMoves: 2, targetWin: 97.5 } };
+    expect(playedMeetsGoal(conversion, 86.3)).toBe(true);
+    expect(playedMeetsGoal(conversion, 79)).toBe(false);
+  });
+
+  it('other goals train the concrete fact (a piece left hanging at +12 is still a lesson)', () => {
+    expect(playedMeetsGoal({ goal: { kind: 'defense', maxUserMoves: 1, targetWin: 97.5 } }, 86.3)).toBe(false);
+    expect(playedMeetsGoal({ goal: { kind: 'sequence', maxUserMoves: 2, targetWin: 97.5 } }, 86.3)).toBe(false);
+    expect(playedMeetsGoal({}, 86.3)).toBe(false);
+  });
+});
+
+describe('one rule for automatic and manual creation (Sprint 4.7, review M1)', () => {
+  it('names why the move played is no error to train, or null', () => {
+    const conversion = { goal: { kind: 'conversion' as const, maxUserMoves: 2, targetWin: 97.5 }, tree: { fen: '', accepted: [], replies: {}, depth: 16 } };
+    expect(noErrorToTrain(conversion, { uci: 'f3d4', winAfter: 86.3 }, 16)).toBe('goal');
+    expect(noErrorToTrain(conversion, { uci: 'f3d4', winAfter: 60 }, 16)).toBeNull();
+    const deeperAccepts = { tree: { fen: '', accepted: [{ uci: 'f3d4', san: 'Nd4', score: { kind: 'cp' as const, value: 0 } }], replies: {}, depth: 16 } };
+    expect(noErrorToTrain(deeperAccepts, { uci: 'f3d4', winAfter: 30 }, 11)).toBe('tree');
+  });
+});
+
+describe('the 80% boundary of training eligibility (Sprint 4.7, closing review L4)', () => {
+  it('a conversion is not built from a move that kept exactly 80%', () => {
+    const conversion = { goal: { kind: 'conversion' as const, maxUserMoves: 2, targetWin: 97.5 } };
+    expect(playedMeetsGoal(conversion, 80)).toBe(true);
+    expect(playedMeetsGoal(conversion, 79.999)).toBe(false);
   });
 });

@@ -6,7 +6,7 @@ import { ERROR_KIND_LABEL, explainMove } from '../../services/pedagogy/explain';
 import { FLAG_LABEL } from '../../services/analysis/classify';
 import { formatScore } from '../../services/analysis/evaluation';
 import { ClassBadge } from '../../components/feedback/ClassBadge';
-import { acceptsPlayedMove, buildExercise, checkCandidate } from '../../services/exercises/generate';
+import { buildExercise, checkCandidate, noErrorToTrain } from '../../services/exercises/generate';
 import { addExercise } from '../../db/trainingRepo';
 import { useToast } from '../../components/feedback/Toast';
 import { completeExercise } from '../../services/analysis/analysisRunner';
@@ -69,8 +69,14 @@ export function ExplanationPanel({ game, review, before, after, settings, linked
     setIsCreating(true);
     try {
       const full = await completeExercise(ex, settings, getEngine());
-      if (acceptsPlayedMove(full, review.uci, before.depth)) {
-        toast('Numa verificação mais profunda, o lance jogado está entre os aceitos: não há erro a treinar nesta posição.', 'warn');
+      const noError = noErrorToTrain(full, review, before.depth);
+      if (noError) {
+        toast(
+          noError === 'tree'
+            ? 'Numa verificação mais profunda, o lance jogado está entre os aceitos: não há erro a treinar nesta posição.'
+            : 'Pelo motor o lance é um erro, mas manteve a vantagem decisiva (expectativa de 80% ou mais), que é o objetivo do exercício desta posição: ela não gera exercício.',
+          'warn',
+        );
         return;
       }
       const r = await addExercise(full);

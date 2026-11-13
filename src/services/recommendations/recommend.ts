@@ -3,6 +3,11 @@ import { detectConcepts, THEME_LABEL, isVerifiedConcept } from '../pedagogy/conc
 import { SKILL_LABEL } from '../adaptation/skills';
 import { patternKey, performanceSentence, PRIORITY_FACTOR, themePerformanceByKey, TWO_SIDED, type ThemePerformance } from './themeEvidence';
 
+/** Training list of a pattern: the side is part of the link only for two-sided motifs (Sprint 4.7, PD-3). */
+export function trainThemeHref(theme: Theme, side?: 'own' | 'opponent'): string {
+  return side && TWO_SIDED.includes(theme) ? `/train?theme=${theme}&side=${side}` : `/train?theme=${theme}`;
+}
+
 export interface EvidenceRef {
   gameId: string;
   ply: number;
@@ -185,7 +190,7 @@ export function nextTraining(input: TrainingInput): Recommendation {
       message,
       theme: top.theme,
       evidence: top.refs,
-      action: { label: 'Treinar este tema', to: `/train?theme=${top.theme}` },
+      action: { label: 'Treinar este tema', to: trainThemeHref(top.theme, top.side) },
       focus: { key: top.key, theme: top.theme },
       ...(top.performance ? { performance: top.performance } : {}),
     };
@@ -202,7 +207,7 @@ export function nextTraining(input: TrainingInput): Recommendation {
       message: `${performanceSentence(weakest)} Vale reforçar este tema antes de avançar.`,
       theme: weakest.theme,
       evidence: [],
-      action: { label: 'Treinar este tema', to: `/train?theme=${weakest.theme}` },
+      action: { label: 'Treinar este tema', to: trainThemeHref(weakest.theme, weakest.side) },
       focus: { key: weakest.key, theme: weakest.theme },
       performance: weakest,
     };
