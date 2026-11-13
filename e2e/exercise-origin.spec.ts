@@ -59,6 +59,8 @@ test('creating an exercise turns the action into "Abrir exercício" and never du
   await expect(page).toHaveURL(new RegExp(`#/train/${stored[0]!.id}$`));
   // Back on the same move, the action still opens the same exercise; nothing new was stored.
   await page.goBack();
+  // The selected move is not in the URL: the analysis may reopen at the start, so select the move again.
+  await page.getByTestId('move-5').click();
   await expect(page.getByTestId('open-exercise')).toBeVisible();
   await page.getByTestId('open-exercise').click();
   await expect(page).toHaveURL(new RegExp(`#/train/${stored[0]!.id}$`));
