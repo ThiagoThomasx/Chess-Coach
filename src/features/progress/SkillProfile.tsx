@@ -1,6 +1,7 @@
 import { TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import type { HistoricalDiagnosis, SkillEstimate } from '../../types/domain';
 import { CONFIDENCE_LABEL, hasHistoricalPoint, hasPointEstimate, SKILL_LABEL } from '../../services/adaptation/skills';
+import { calendarMonthYear } from '../../services/stats/stats';
 
 type Props = { profile: readonly SkillEstimate[] };
 
@@ -15,8 +16,8 @@ const CONF_CLASS: Record<SkillEstimate['confidence'], string> = {
 
 const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);
 
-/** Month and year in UTC: game evidence carries the game's calendar date (stored at 00:00 UTC). */
-const monthYear = (t: number) => new Date(t).toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+/** PGN dates in UTC, real instants (imports, exercises) on the local calendar (audit FA-3). */
+const monthYear = calendarMonthYear;
 
 /** All-time diagnosis (no age decay): what the evidence, old games included, shows about the skill. */
 function HistoryLine({ h }: { h: HistoricalDiagnosis }) {

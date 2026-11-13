@@ -11,6 +11,7 @@ import { addExercise } from '../../db/trainingRepo';
 import { useToast } from '../../components/feedback/Toast';
 import { completeExercise } from '../../services/analysis/analysisRunner';
 import { getEngine } from '../../services/engine/engineService';
+import { exerciseHref } from '../../services/exercises/origin';
 
 type Props = {
   game: Game;
@@ -18,6 +19,11 @@ type Props = {
   before: PositionAnalysis | null;
   after: PositionAnalysis | null;
   settings: Settings;
+  /**
+   * Exercise already derived from this move (Sprint 4.6, B2): the action opens it instead of creating one.
+   * `null`: none; `undefined`: not known yet (no action is shown until it is).
+   */
+  linkedExerciseId?: string | null | undefined;
 };
 
 /** The six questions of an explanation, in reading order; empty sections are omitted. */
@@ -31,7 +37,9 @@ const SECTIONS: [keyof ReturnType<typeof explainMove>, string][] = [
   ['recognize', 'Como reconhecer situações semelhantes'],
 ];
 
-export function ExplanationPanel({ game, review, before, after, settings }: Props) {
+const isError = (r: MoveReview) => r.classification === 'inaccuracy' || r.classification === 'mistake' || r.classification === 'blunder';
+
+export function ExplanationPanel({ game, review, before, after, settings, linkedExerciseId }: Props) {
   const toast = useToast();
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -126,18 +134,29 @@ export function ExplanationPanel({ game, review, before, after, settings }: Prop
           {review.cpLoss !== undefined ? ` · ${review.cpLoss} cp` : ''}
         </span>
       </div>
-      {(review.classification === 'inaccuracy' || review.classification === 'mistake' || review.classification === 'blunder') && (
+      {linkedExerciseId ? (
         <div className="row" style={{ marginTop: '0.85rem' }}>
-          <button className="btn" disabled={!canCreate || isCreating} onClick={() => void create()} data-testid="create-exercise">
-            <Dumbbell size={15} /> {isCreating ? 'Calculando a sequência…' : 'Criar exercício desta posição'}
-          </button>
-          {createdId && (
-            <Link to={`/train/${createdId}`} className="small" data-testid="open-created-exercise">
-              Resolver agora →
-            </Link>
-          )}
-          {!canCreate && <span className="xs faint">{candidate.reasons.join('; ')}</span>}
+          <Link to={exerciseHref(linkedExerciseId)} className="btn" data-testid="open-exercise">
+            <Dumbbell size={15} /> Abrir exercício
+          </Link>
+          <span className="xs faint">Esta posição já virou um exercício.</span>
         </div>
+      ) : (
+        linkedExerciseId === null &&
+        isError(review) && (
+          <div className="row" style={{ marginTop: '0.85rem' }}>
+            <button className="btn" disabled={!canCreate || isCreating} onClick={() => void create()} data-testid="create-exercise">
+              <Dumbbell size={15} /> {isCreating ? 'Calculando a sequência…' : 'Criar exercício desta posição'}
+            </button>
+            {/* Only when the stored exercise is not linked to this move: the same position already trained from another game. */}
+            {createdId && (
+              <Link to={exerciseHref(createdId)} className="small" data-testid="open-created-exercise">
+                Resolver agora →
+              </Link>
+            )}
+            {!canCreate && <span className="xs faint">{candidate.reasons.join('; ')}</span>}
+          </div>
+        )
       )}
     </section>
   );

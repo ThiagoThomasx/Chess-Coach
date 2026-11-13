@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowLeft, Bookmark, BookmarkCheck, ChevronFirst, ChevronLast, ChevronLeft, ChevronRight, FlipVertical2, Undo2 } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { markBookmarkReviewed, toggleBookmark } from '../../db/analysisRepo';
+import { useLiveAnalysis } from './useLiveAnalysis';
 import { useSettings } from '../../hooks/useSettings';
 import { replayGame, sideToMove } from '../../services/chess/position';
 import { ChessBoard, type BoardArrow } from '../../components/board/ChessBoard';
@@ -17,6 +18,8 @@ import { GameSummaryPanel } from './GameSummaryPanel';
 import { CurrentMoveStrip } from './CurrentMoveStrip';
 import { displayed, navReducer } from './navigation';
 import { badgeForReview } from '../../services/analysis/moveBadge';
+import { exercisesForGame } from '../../db/trainingRepo';
+import { linkedExercisesByPly } from '../../services/exercises/origin';
 import type { Game, MoveReview } from '../../types/domain';
 
 export function AnalysisPage() {
@@ -37,22 +40,31 @@ export function AnalysisPage() {
 function AnalysisView({ game }: { game: Game }) {
   const settings = useSettings();
   const gameId = game.id;
-  const analysis = useLiveQuery(() => getDb().analyses.get(gameId), [gameId]);
-  const bookmarks = useLiveQuery(() => getDb().bookmarks.where('gameId').equals(gameId).toArray(), [gameId], []);
+  const analysis = useLiveAnalysis(gameId);
+  const storedBookmarks = useLiveQuery(() => getDb().bookmarks.where('gameId').equals(gameId).toArray(), [gameId]);
+  const bookmarks = storedBookmarks ?? [];
 
   const plies = useMemo(() => replayGame(game.moves, game.startFen), [game]);
   const fens = useMemo(() => [game.startFen, ...plies.map((p) => p.fenAfter)], [game, plies]);
+  // Exercises derived from this game's moves (Sprint 4.6, B2): live, so a created or removed exercise shows at once.
+  // Undefined until the query answers: the move's action waits for it instead of flashing "Criar exercício".
+  const gameExercises = useLiveQuery(() => exercisesForGame(gameId), [gameId]);
+  const linkedExercises = useMemo(() => (gameExercises ? linkedExercisesByPly(gameExercises, gameId, fens) : undefined), [gameExercises, gameId, fens]);
   const reducer = useMemo(() => navReducer(plies), [plies]);
   const [params] = useSearchParams();
   const initialPly = Math.max(0, Math.min(plies.length, Number(params.get('ply') ?? 0) || 0));
   const [nav, dispatch] = useReducer(reducer, { ply: initialPly, variation: null });
 
+  // Opening a bookmarked position from the dashboard's "Posições marcadas" list (`&review=1`) counts as reviewing it.
+  // Only that link, and only the bookmark that existed when the page opened: other links to a move (exercise origin,
+  // error patterns) and a bookmark created here afterwards are not reviews (Sprint 4.6 audit, AC-2).
+  const reviewOnOpen = useRef(params.get('review') === '1');
   useEffect(() => {
-    // Opening a bookmarked position from the dashboard counts as reviewing it.
-    if (!params.get('ply')) return;
-    const b = bookmarks.find((x) => x.ply === initialPly && !x.reviewedAt);
+    if (!reviewOnOpen.current || storedBookmarks === undefined) return;
+    reviewOnOpen.current = false;
+    const b = storedBookmarks.find((x) => x.ply === initialPly && !x.reviewedAt);
     if (b) void markBookmarkReviewed(b.id);
-  }, [bookmarks, initialPly, params]);
+  }, [storedBookmarks, initialPly]);
   const [flipped, setFlipped] = useState(false);
 
   useEffect(() => {
@@ -188,10 +200,19 @@ function AnalysisView({ game }: { game: Game }) {
               isInVariation={!!nav.variation}
               startsWithBlack={sideToMove(game.startFen) === 'b'}
               firstMoveNumber={firstMoveNumber}
+              exercises={linkedExercises}
               onSelect={(ply) => dispatch({ type: 'goto', ply })}
             />
           </section>
-          <ExplanationPanel key={nav.ply} game={game} review={review} before={before} after={after} settings={settings} />
+          <ExplanationPanel
+            key={nav.ply}
+            game={game}
+            review={review}
+            before={before}
+            after={after}
+            settings={settings}
+            linkedExerciseId={!linkedExercises ? undefined : nav.variation ? null : (linkedExercises.get(nav.ply) ?? null)}
+          />
           {analysis && analysis.positions.some(Boolean) && (
             <section className="panel">
               <EvalGraph positions={analysis.positions} currentPly={nav.ply} onSelect={(ply) => dispatch({ type: 'goto', ply })} />

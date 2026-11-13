@@ -9,6 +9,7 @@ import { Difficulty } from './Difficulty';
 import { MiniBoard } from './MiniBoard';
 import type { Attempt, Exercise, Skill, Theme } from '../../types/domain';
 import { estimateProfile, SKILL_LABEL } from '../../services/adaptation/skills';
+import { useMinute } from '../../hooks/useMinute';
 
 type Status = 'all' | 'due' | 'new' | 'failed' | 'mastered' | 'recommended';
 
@@ -37,7 +38,10 @@ export function TrainingPage() {
   const difficulty = Number(params.get('difficulty') ?? 0);
   const source = params.get('source') ?? '';
   const skill = (params.get('skill') as Skill | null) ?? '';
-  const now = Date.now();
+  // Re-rendered every minute: an exercise that falls due while the screen is open joins "Pendentes"
+  // without a database write (audit FA-4; same clock as the sidebar and the dashboard).
+  const minute = useMinute();
+  const now = useMemo(() => Date.now(), [minute]);
 
   const byExercise = useMemo(() => {
     const m = new Map<string, Attempt[]>();

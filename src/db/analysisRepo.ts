@@ -1,4 +1,4 @@
-import type { Bookmark, GameAnalysis, PositionAnalysis, SkillEvent } from '../types/domain';
+import type { AnalysisStatus, Bookmark, GameAnalysis, PositionAnalysis, SkillEvent } from '../types/domain';
 import { fenKey, type EvalCache } from '../services/analysis/gameAnalyzer';
 import { newId } from '../utils/hash';
 import { gameEvidenceTime } from '../services/games/gameDate';
@@ -12,8 +12,37 @@ export async function saveAnalysis(a: GameAnalysis): Promise<void> {
   await getDb().analyses.put(a);
 }
 
-export async function listAnalyses(): Promise<GameAnalysis[]> {
-  return getDb().analyses.toArray();
+/**
+ * Saves an analysis only while its game exists, checked in the write's own transaction: a game
+ * deleted while its analysis runs is not given its analysis back (Sprint 4.6 audit, AC-1).
+ * False when the game is gone and nothing was written.
+ */
+export async function saveAnalysisIfGameExists(a: GameAnalysis): Promise<boolean> {
+  const db = getDb();
+  return db.transaction('rw', db.games, db.analyses, async () => {
+    if (!(await db.games.get(a.gameId))) return false;
+    await db.analyses.put(a);
+    return true;
+  });
+}
+
+/**
+ * Status of every analysis, read from the `status` index only: no record (and so none of
+ * its positions) is loaded or cloned (Sprint 4.6, PA-1). For lists that show only the status.
+ */
+export async function analysisStatuses(): Promise<Map<string, AnalysisStatus>> {
+  const out = new Map<string, AnalysisStatus>();
+  await getDb()
+    .analyses.orderBy('status')
+    .eachKey((status, cursor) => {
+      out.set(String(cursor.primaryKey), status as AnalysisStatus);
+    });
+  return out;
+}
+
+/** Complete analyses only, through the `status` index: running or paused ones are not loaded (Sprint 4.6, PA-1). */
+export async function listCompleteAnalyses(): Promise<GameAnalysis[]> {
+  return getDb().analyses.where('status').equals('complete').toArray();
 }
 
 /** Analyses left in "running" state by a closed tab become "paused" so they can be resumed. */

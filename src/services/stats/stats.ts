@@ -1,8 +1,8 @@
 import type { Attempt, Exercise, Game, GameAnalysis, MoveClass, OpeningAttempt, SkillEvent, Theme } from '../../types/domain';
 import { matchOpening } from '../openings/library';
-import { errorThemes, type AnalyzedGameInput, type ErrorPattern } from '../recommendations/recommend';
+import { errorThemes, recentGames, type AnalyzedGameInput, type ErrorPattern } from '../recommendations/recommend';
 import { replyLinesOf } from '../analysis/gameAnalyzer';
-import { gameTime } from '../games/gameDate';
+import { gameTime, isUtcCalendarDate } from '../games/gameDate';
 
 export { gameTime };
 
@@ -48,15 +48,21 @@ export const dayKey = (t: number): string => {
 };
 
 /**
- * Calendar day of a skill event. Game evidence carries the game's calendar
- * date, stored as 00:00 UTC: read in UTC, or west of Greenwich (Brazil) it
- * would show the day before. Other evidence happened at a real instant and
- * uses the local day (Sprint 4.5, P3-1).
+ * Calendar day of a skill event. Game evidence dated by the PGN carries the
+ * game's calendar date, stored as 00:00 UTC: read in UTC, or west of Greenwich
+ * (Brazil) it would show the day before (Sprint 4.5, P3-1). Game evidence dated
+ * by the import time (no PGN date) and all other evidence happened at a real
+ * instant and use the local day (audit FA-3, Sprint 4.6).
  */
 export function evidenceDayKey(e: Pick<SkillEvent, 'at' | 'source'>): string {
-  if (e.source !== 'game') return dayKey(e.at);
+  if (e.source !== 'game' || !isUtcCalendarDate(e.at)) return dayKey(e.at);
   const d = new Date(e.at);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+/** Month and year (MM/YYYY): in UTC for a PGN calendar date, on the local calendar for a real instant (audit FA-3). */
+export function calendarMonthYear(t: number): string {
+  return new Date(t).toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', ...(isUtcCalendarDate(t) ? { timeZone: 'UTC' } : {}) });
 }
 
 /** Attempts grouped by day: independent rate per day (only days with attempts). */
@@ -71,10 +77,65 @@ export function dailyPerformance(attempts: readonly Attempt[]): { day: string; a
     });
 }
 
-export function analysesOverTime(analyses: readonly GameAnalysis[]): { day: string; count: number }[] {
-  const map = new Map<string, number>();
-  for (const a of analyses.filter((x) => x.status === 'complete')) map.set(dayKey(a.updatedAt), (map.get(dayKey(a.updatedAt)) ?? 0) + 1);
-  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, count]) => ({ day, count }));
+/** Below this many games with the user color, no comparison is shown (Sprint 4.6, B3). */
+export const TREND_MIN_GAMES = 6;
+/** Games per window once there are at least 2 × TREND_WINDOW. */
+export const TREND_WINDOW = 10;
+/** Smallest change in serious errors per game called an improvement or a decline. */
+export const TREND_THRESHOLD = 0.3;
+
+export type SeriousErrorTrend =
+  | { kind: 'insufficient'; games: number }
+  | {
+      kind: 'compared';
+      /** Games in each window. */
+      window: number;
+      recentGames: number;
+      previousGames: number;
+      /** Mean serious errors (user mistakes + blunders) per game in each window. */
+      recent: number;
+      previous: number;
+      /** recent − previous, rounded to 3 decimals: negative means fewer errors. */
+      difference: number;
+      direction: 'better' | 'worse' | 'stable';
+      /**
+       * One error more or less in a window already moves its mean by at least the threshold
+       * (1 / window ≥ TREND_THRESHOLD, i.e. 3 games per window): the direction rests on a single
+       * error, so it must not be presented as an improvement or a decline (review M1).
+       */
+      singleErrorDecides: boolean;
+      /**
+       * Compared games without a reliable PGN date. They are placed as the oldest; if they are in
+       * fact recent, the direction may be inverted, so it is shown as uncertain (audit AC-5).
+       */
+      undatedGames: number;
+    };
+
+const seriousErrors = (g: AnalyzedGameInput): number => g.reviews.filter((r) => r.color === g.userColor && (r.classification === 'mistake' || r.classification === 'blunder')).length;
+const round3 = (v: number): number => Math.round(v * 1000) / 1000;
+
+/**
+ * "Minhas partidas estão melhorando?" (Sprint 4.6, B3; docs/METHODOLOGY.md): serious errors
+ * per game (the user's own moves classified mistake or blunder) in the most recent games
+ * against the games right before them. Only analysed games with the user color count. Games
+ * are ordered by game date with undated games first, as in `recentGames` (the import time only
+ * breaks ties). Window: 10 games from 20 games on, otherwise half the total rounded down (the
+ * oldest game is left out when the total is odd); fewer than 6 games give no comparison.
+ */
+export function seriousErrorTrend(inputs: readonly AnalyzedGameInput[]): SeriousErrorTrend {
+  const valid = inputs.filter((g) => g.userColor);
+  if (valid.length < TREND_MIN_GAMES) return { kind: 'insufficient', games: valid.length };
+  const ordered = recentGames(valid, valid.length);
+  const window = valid.length >= 2 * TREND_WINDOW ? TREND_WINDOW : Math.floor(valid.length / 2);
+  const recentSet = ordered.slice(-window);
+  const previousSet = ordered.slice(-2 * window, -window);
+  const mean = (list: readonly AnalyzedGameInput[]) => round3(list.reduce((s, g) => s + seriousErrors(g), 0) / list.length);
+  const recent = mean(recentSet);
+  const previous = mean(previousSet);
+  const difference = round3(recent - previous);
+  const direction = Math.abs(difference) < TREND_THRESHOLD ? 'stable' : difference < 0 ? 'better' : 'worse';
+  const undatedGames = [...previousSet, ...recentSet].filter((g) => g.at === undefined).length;
+  return { kind: 'compared', window, recentGames: recentSet.length, previousGames: previousSet.length, recent, previous, difference, direction, singleErrorDecides: 1 / window >= TREND_THRESHOLD, undatedGames };
 }
 
 /**

@@ -183,3 +183,49 @@ test('after the move was named, a later retry on the same screen counts as assis
   expect(attempts[0]).toMatchObject({ correct: false, revealed: true });
   expect(attempts[1]).toMatchObject({ correct: true, revealed: false, hintsUsed: 1 });
 });
+
+test('a rejected move shows the reply that refutes it; replaying it on the board records nothing (Sprint 4.6, B1)', async ({ page }) => {
+  // White rook d2, Black queen d5: Rxd5 wins the queen; Rd4?? hangs the rook to Qxd4.
+  const fen = '4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1';
+  const best = { uci: 'd2d5', san: 'Rxd5', score: { kind: 'cp', value: 900 } };
+  const single = {
+    ...exercise,
+    id: 'refute-e2e',
+    fen,
+    objective: 'Encontre o melhor lance.',
+    theme: 'hanging_piece',
+    skill: 'tactics',
+    bestMove: best,
+    acceptableMoves: [best],
+    solutionLine: ['d2d5'],
+    ambiguous: false,
+    kind: 'single',
+    goal: { kind: 'single', maxUserMoves: 1, targetWin: 99 },
+    tree: { fen, accepted: [best], replies: {}, depth: 16 },
+  };
+  await seed(page, single as unknown as typeof exercise);
+  await page.goto('/#/train/refute-e2e');
+  // The live region exists before the first feedback, so the first announcement is not lost (audit FA-5).
+  await expect(page.getByTestId('exercise-feedback-region')).toHaveAttribute('role', 'status');
+  await expect(page.getByTestId('exercise-feedback')).toHaveCount(0);
+
+  await playMove(page, 'exercise-board', 'd2d4');
+  const feedback = page.getByTestId('exercise-feedback');
+  await expect(feedback).toHaveClass(/callout-bad/, { timeout: 30_000 });
+  // Stockfish wins the rook at once or after a check: the line shows the capture either way.
+  await expect(feedback).toContainText('perde material');
+  await expect(feedback).toContainText('O adversário responde');
+  await expect(page.getByTestId('refutation-line')).toContainText(/^1… /);
+  await expect(page.getByTestId('refutation-line')).toContainText('Qxd4');
+  await expect(feedback.locator('> div > p').first()).not.toContainText('p.p.');
+  await expect(page.getByTestId('feedback-detail')).toContainText('p.p.');
+  await expect(page.getByTestId('next-review')).toContainText('Próxima revisão');
+  const attempts = (await readTable(page, 'attempts')).length;
+
+  await page.getByTestId('show-refutation').click();
+  // The line plays move by move; it ends on the reply or on a later move of the line.
+  await expect(page.getByTestId('legend-last-move')).toContainText('Linha de refutação');
+  await expect(page.getByTestId('legend-badge')).toHaveCount(0);
+  await expect(page.getByTestId('show-refutation')).toContainText('de novo');
+  expect((await readTable(page, 'attempts')).length).toBe(attempts);
+});

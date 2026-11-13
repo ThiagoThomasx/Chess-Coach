@@ -196,6 +196,22 @@ describe('sequence exercises with the real engine', () => {
   }, 120_000);
 });
 
+describe('rejected moves explain their refutation (Sprint 4.6, B1, real engine)', () => {
+  it('a hanging rook is refuted by the capture, stated as a material loss', async () => {
+    const fen = '4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1';
+    const single: ExerciseGoal = { kind: 'single', maxUserMoves: 1, targetWin: 99 };
+    const tree = await buildSolutionTree(engine, fen, single, { depth: 14, multiPv: 2, tolerance: 5 });
+    expect(tree.accepted[0]?.uci).toBe('d2d5');
+    const ex = { id: 'r', fen, sideToMove: 'w', tolerance: 5, goal: single, tree, kind: 'single' } as unknown as Exercise & { goal: ExerciseGoal };
+    const v = await playSolverMove(ex, { node: tree, userMoves: 0, fen }, 'd2d4', { engine, depth: 14, tolerance: 5 });
+    if (v.kind !== 'rejected') throw new Error(`expected rejected, got ${v.kind}`);
+    // Stockfish may win the rook at once (Qxd4) or after a check (Qe5+ … Qxd4): either way the line shows it.
+    expect(v.refutation?.line.map((m) => m.san.replace('+', ''))).toContain('Qxd4');
+    expect(v.consequence).toMatch(/^perde material/);
+    expect(v.message).toContain(`O adversário responde ${v.refutation?.line[0]?.san}.`);
+  }, 120_000);
+});
+
 function sanOf(fen: string, uci: string): string {
   return uciToSan(fen, uci) as string;
 }

@@ -3,6 +3,7 @@ import { applyUci, sideToMove, terminalState, uciToSan } from '../chess/position
 import { gainPlies, settledSwing } from '../chess/material';
 import { matedScore, winPercentFor } from '../analysis/evaluation';
 import type { EngineLike } from '../analysis/gameAnalyzer';
+import { consequenceOf, refutationLine, type Refutation } from './refutation';
 
 /** Termination rules (documented in docs/METHODOLOGY.md). */
 export const MAX_SEQUENCE_MOVES = 4;
@@ -210,7 +211,11 @@ export interface MoveAssessment {
 
 export type MoveVerdict =
   | { kind: 'illegal'; message: string }
-  | { kind: 'rejected'; message: string; winLoss?: number; assessment?: MoveAssessment }
+  /**
+   * `consequence`: the loss in words (docs/METHODOLOGY.md); `refutation`: the opponent's line
+   * from the same search that judged the move, absent when that search gave none.
+   */
+  | { kind: 'rejected'; message: string; winLoss?: number; assessment?: MoveAssessment; consequence?: string; refutation?: Refutation }
   | { kind: 'unverifiable'; message: string }
   /** Too close to the tolerance to call: nothing is recorded. */
   | { kind: 'uncertain'; message: string; winLoss: number }
@@ -247,11 +252,16 @@ async function referenceScore(state: SolveState, deps: SolveDeps): Promise<Score
 /** Loss of the user's move against the best one, and the solver's mate distance after it (root-move count). */
 interface Measured {
   loss: number;
+  /** Depth of the search the scores come from (the deeper recheck included; audit AC-6). */
+  depth: number;
   score: Score;
   /** Score of the reference move in the same comparison. */
   reference: Score;
   /** Solver moves to mate counting the user's move, or null when not mating. */
   mateMoves: number | null;
+  /** Lines of the user's move and of the reference move, only when both come from one comparable search. */
+  pv?: string[];
+  referencePv?: string[];
 }
 
 /**
@@ -269,7 +279,7 @@ async function measureSameSearch(state: SolveState, uci: string, solver: Color, 
   const theirs = r.lines.find((l) => l.pv[0] === ref);
   if (!mine || !theirs) return null;
   const bestWin = winPercentFor(theirs.score, solver);
-  return { loss: Math.max(0, bestWin - winPercentFor(mine.score, solver)), score: mine.score, reference: theirs.score, mateMoves: mateFor(mine.score, solver) };
+  return { loss: Math.max(0, bestWin - winPercentFor(mine.score, solver)), depth, score: mine.score, reference: theirs.score, mateMoves: mateFor(mine.score, solver), pv: mine.pv, referencePv: theirs.pv };
 }
 
 /** Fallback measurement: search the position after the move and compare with the stored reference. */
@@ -279,7 +289,7 @@ async function measureAfter(after: string, reference: Score, solver: Color, deps
   const line = r.lines[0];
   if (!line || !r.complete) return null;
   const m = mateFor(line.score, solver);
-  return { loss: Math.max(0, bestWin - winPercentFor(line.score, solver)), score: line.score, reference, mateMoves: m === null ? null : m + 1 };
+  return { loss: Math.max(0, bestWin - winPercentFor(line.score, solver)), depth: deps.depth, score: line.score, reference, mateMoves: m === null ? null : m + 1 };
 }
 
 /** Win% for the solver after its move, from the stored node or a fresh search. */
@@ -309,7 +319,7 @@ async function judge(state: SolveState, uci: string, after: string, solver: Colo
     return { ok: false, verdict: { kind: 'unverifiable', message: `Não foi possível verificar ${san} com o motor agora.` } };
   }
   if (!m) return { ok: false, verdict: { kind: 'unverifiable', message: `A verificação de ${san} não terminou; tente novamente.` } };
-  const assessment: MoveAssessment = { reference: m.reference, played: m.score, depth: deps.depth };
+  const assessment: MoveAssessment = { reference: m.reference, played: m.score, depth: m.depth };
   if (deps.mateMovesLeft !== undefined && (m.mateMoves ?? Infinity) > deps.mateMovesLeft) {
     return { ok: false, verdict: { kind: 'rejected', message: `${san} não mantém o mate forçado dentro do limite do exercício.`, assessment } };
   }
@@ -324,7 +334,19 @@ async function judge(state: SolveState, uci: string, after: string, solver: Colo
       },
     };
   }
-  return { ok: false, verdict: { kind: 'rejected', message: `${san} não resolve: a expectativa cai ${m.loss.toFixed(1)} p.p. em relação ao melhor lance (tolerância ${deps.tolerance}).`, winLoss: m.loss, assessment } };
+  return { ok: false, verdict: rejectedVerdict(state.fen, san, solver, m, assessment) };
+}
+
+/**
+ * Rejection explained by its consequence (Sprint 4.6, B1). The refutation line comes only from
+ * the comparable search; after the fallback search the text says it is the engine's estimate.
+ */
+function rejectedVerdict(fen: string, san: string, solver: Color, m: Measured, assessment: MoveAssessment): MoveVerdict {
+  const consequence = consequenceOf({ fen, solver, played: m.score, reference: m.reference, ...(m.pv ? { pv: m.pv } : {}), ...(m.referencePv ? { referencePv: m.referencePv } : {}) });
+  const line = m.pv ? refutationLine(fen, m.pv) : undefined;
+  const reply = line?.[0];
+  const message = m.pv ? `${san} não resolve: ${consequence}.${reply ? ` O adversário responde ${reply.san}.` : ''}` : `${san} não resolve: o motor avalia que ${consequence}.`;
+  return { kind: 'rejected', message, winLoss: m.loss, assessment, consequence, ...(line ? { refutation: { line } } : {}) };
 }
 
 /**

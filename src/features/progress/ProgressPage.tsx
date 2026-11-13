@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { getDb } from '../../db/database';
+import { listCompleteAnalyses } from '../../db/analysisRepo';
 import { estimateProfile, SKILLS, SKILL_LABEL } from '../../services/adaptation/skills';
-import { analysesOverTime, attemptStats, errorDistribution, openingResults, openingStudy, themeCounts, toAnalyzedInputs } from '../../services/stats/stats';
+import { attemptStats, errorDistribution, openingResults, openingStudy, seriousErrorTrend, themeCounts, toAnalyzedInputs } from '../../services/stats/stats';
 import { findOpening } from '../../services/openings/library';
 import { isDueReview } from '../../services/scheduling/srs';
 import { useMinute } from '../../hooks/useMinute';
 import { SkillProfile } from './SkillProfile';
-import { ClassDistributionChart, CountByDayChart, SkillHistoryChart } from './ProgressCharts';
+import { ClassDistributionChart, SkillHistoryChart } from './ProgressCharts';
+import { GameTrend } from './GameTrend';
 import { RecentPerformanceChart } from '../dashboard/RecentPerformanceChart';
 import type { Skill } from '../../types/domain';
 
@@ -17,7 +19,8 @@ export function ProgressPage() {
     const db = getDb();
     const [games, analyses, exercises, attempts, events, bookmarks, openingAttempts, custom] = await Promise.all([
       db.games.toArray(),
-      db.analyses.toArray(),
+      // Only complete analyses feed the stats: running ones (rewritten during analysis) are not loaded (PA-1).
+      listCompleteAnalyses(),
       db.exercises.toArray(),
       db.attempts.orderBy('at').toArray(),
       db.skillEvents.toArray(),
@@ -76,6 +79,9 @@ export function ProgressPage() {
         </div>
       </div>
 
+      {/* Quality of the games, not activity in the app: replaces "Análises feitas por dia" (Sprint 4.6, B3). */}
+      <GameTrend trend={seriousErrorTrend(inputs)} />
+
       <section className="panel">
         <div className="panel-head">
           <h2>Perfil de competências</h2>
@@ -116,13 +122,6 @@ export function ProgressPage() {
             <h2>Desempenho nos exercícios</h2>
           </div>
           <RecentPerformanceChart attempts={data.attempts} days={60} />
-        </section>
-        <section className="panel">
-          <div className="panel-head">
-            <h2>Análises feitas por dia</h2>
-          </div>
-          <p className="xs muted">Dia em que cada análise foi concluída, e não o dia em que a partida foi jogada.</p>
-          <CountByDayChart data={analysesOverTime(data.analyses)} name="Partidas analisadas" />
         </section>
         <section className="panel">
           <div className="panel-head">

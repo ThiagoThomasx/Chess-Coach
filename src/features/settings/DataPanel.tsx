@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { dayKey } from '../../services/stats/stats';
 import { Download, HardDrive, Upload } from 'lucide-react';
 import { clearData, exportBackup, restoreBackup, storageEstimate, validateBackup, type ClearScope } from '../../services/backup/backup';
 import { useToast } from '../../components/feedback/Toast';
@@ -31,7 +32,8 @@ export function DataPanel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `chessquest-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    // Local day: a backup made at 22h in Brazil is not named after the next UTC day (audit FA-3).
+    a.download = `chessquest-backup-${dayKey(Date.now())}.json`;
     a.click();
     URL.revokeObjectURL(url);
     toast('Backup exportado', 'good');

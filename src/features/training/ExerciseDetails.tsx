@@ -1,7 +1,8 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ChevronDown, Trash2 } from 'lucide-react';
 import { deleteExercise } from '../../db/trainingRepo';
 import type { Attempt, Exercise } from '../../types/domain';
+import { gameRef } from '../../services/exercises/origin';
 
 type Props = {
   ex: Exercise;
@@ -35,13 +36,10 @@ export function ExerciseDetails({ ex, attempts, canDelete }: Props) {
         <ChevronDown size={16} className="details-chevron" aria-hidden="true" />
       </summary>
       <div className="stack" style={{ gap: '0.6rem', marginTop: '0.8rem' }}>
-        {ex.gameId ? (
-          <Link to={`/analysis/${ex.gameId}`} className="small touch-link">
-            Abrir a partida de origem · meia-jogada {ex.ply}
-          </Link>
-        ) : (
-          <span className="small muted">Exercício de abertura</span>
-        )}
+        {/* Plain text: the link back to the game's move is in the origin section, shown once the attempt is solved or revealed (B2). */}
+        <span className="small muted" data-testid="details-origin">
+          {gameRef(ex) ? `Exercício de uma partida sua · meia-jogada ${ex.ply}` : ex.source === 'opening' ? 'Exercício de abertura' : 'Exercício sem partida de origem'}
+        </span>
         {ex.ambiguous && (
           <p className="xs faint">
             Esta posição admite mais de uma solução dentro da tolerância de {ex.tolerance} p.p.; todas são aceitas, e lances fora da lista são verificados pelo motor.

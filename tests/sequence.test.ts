@@ -287,6 +287,21 @@ describe('verdicts carry the measured scores for the move badge (Sprint 4.2)', (
     expect(v.kind === 'rejected' && v.assessment).toEqual({ reference: cp(300), played: cp(0), depth: 12 });
   });
 
+  it('after the deeper re-check, the verdict reports the depth its scores come from (audit AC-6)', async () => {
+    // Borderline at depth 12 (≈ 6.4 p.p.), clearly worse at the re-check depth.
+    const deeper: EngineLike = {
+      analyze: async (req) => {
+        const scores: Record<string, number> = (req.depth ?? 12) > 12 ? { a1a7: 300, g1h1: 0 } : { a1a7: 70, g1h1: 0 };
+        const moves = req.searchMoves ?? Object.keys(scores);
+        const lines = moves.map((u, i) => ({ multipv: i + 1, depth: req.depth ?? 12, score: cp(scores[u] ?? 0), pv: [u] }));
+        return { fen: req.fen, depth: req.depth ?? 12, multiPv: lines.length, timeMs: 0, complete: true, lines } as never;
+      },
+    };
+    const v = await playSolverMove(exercise({ goal: single, kind: 'single' }), state, 'g1h1', { engine: deeper, depth: 12, tolerance: 5 });
+    expect(v.kind).toBe('rejected');
+    expect(v.kind === 'rejected' && v.assessment).toEqual({ reference: cp(300), played: cp(0), depth: 16 });
+  });
+
   it('checkmate is assessed as the best move', async () => {
     const fen = '7k/8/6K1/8/8/8/8/5Q2 w - - 0 1';
     const ex = exercise({ fen, tree: leaf(fen), goal: { kind: 'mate', maxUserMoves: 1, targetWin: 100, mateIn: 1 } });
@@ -317,5 +332,66 @@ describe('a solved verdict that ends with an opponent reply names the reply (Spr
     const ex = exercise({ goal: { kind: 'single', maxUserMoves: 1, targetWin: 100 } });
     const v = await playSolverMove(ex, start(ex), 'a1a7', deps(0));
     expect(v.kind === 'solved' && v.reply).toBeFalsy();
+  });
+});
+
+describe('a rejected move explains its refutation (Sprint 4.6, B1)', () => {
+  // White rook d2, Black queen d5: Rxd5 wins the queen; Rd4?? hangs the rook to Qxd4.
+  const FEN = '4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1';
+  const single: ExerciseGoal = { kind: 'single', maxUserMoves: 1, targetWin: 99 };
+  const node: SolutionNode = { fen: FEN, accepted: [{ uci: 'd2d5', san: 'Rxd5', score: cp(900) }], replies: {}, depth: 16 };
+  const state: SolveState = { node, userMoves: 0, fen: FEN };
+  const ex = () => exercise({ fen: FEN, goal: single, kind: 'single', tree: node });
+  type Line = { score: Score; pv: string[] };
+  /** Same-search lines per root move; `after` answers searches of other positions (the measureAfter fallback). */
+  const engine = (root: Record<string, Line>, after?: Line): EngineLike => ({
+    analyze: async (req) => {
+      const lines = req.searchMoves ? req.searchMoves.flatMap((u) => (root[u] ? [root[u]] : [])) : after ? [after] : [];
+      return { fen: req.fen, depth: req.depth ?? 12, multiPv: lines.length, timeMs: 0, complete: true, lines: lines.map((l, i) => ({ multipv: i + 1, depth: req.depth ?? 12, ...l })) } as never;
+    },
+  });
+  const ROOT = { d2d5: { score: cp(900), pv: ['d2d5', 'e8e7'] }, d2d4: { score: cp(-600), pv: ['d2d4', 'd5d4', 'e1f1', 'd4d1', 'f1f2', 'e8e7'] } };
+
+  it('carries the reply line from the same search that judged the move', async () => {
+    const v = await playSolverMove(ex(), state, 'd2d4', { engine: engine(ROOT), depth: 12, tolerance: 5 });
+    if (v.kind !== 'rejected') throw new Error('expected rejected');
+    expect(v.refutation?.line.map((m) => m.san)).toEqual(['Qxd4', 'Kf1', 'Qd1+', 'Kf2']);
+    expect(v.message).toBe('Rd4 não resolve: perde material (cerca de uma torre). O adversário responde Qxd4.');
+    expect(v.consequence).toBe('perde material (cerca de uma torre)');
+  });
+
+  it('keeps the measured loss for the details, out of the main text', async () => {
+    const v = await playSolverMove(ex(), state, 'd2d4', { engine: engine(ROOT), depth: 12, tolerance: 5 });
+    if (v.kind !== 'rejected') throw new Error('expected rejected');
+    expect(v.winLoss).toBeGreaterThan(50);
+    expect(v.message).not.toMatch(/p\.p\./);
+  });
+
+  it('without a reply in the engine line, states the consequence and invents no refutation', async () => {
+    const root = { ...ROOT, d2d4: { score: cp(0), pv: ['d2d4'] } };
+    const v = await playSolverMove(ex(), state, 'd2d4', { engine: engine(root), depth: 12, tolerance: 5 });
+    if (v.kind !== 'rejected') throw new Error('expected rejected');
+    expect(v.refutation).toBeUndefined();
+    expect(v.message).toBe('Rd4 não resolve: a posição passa de vantagem decisiva para igualdade.');
+  });
+
+  it('when only the position after the move could be searched, says it is the engine estimate, with no line', async () => {
+    const v = await playSolverMove(ex(), state, 'd2d4', { engine: engine({ d2d5: ROOT.d2d5 }, { score: cp(-600), pv: ['d5d4', 'e1f1'] }), depth: 12, tolerance: 5 });
+    if (v.kind !== 'rejected') throw new Error('expected rejected');
+    expect(v.refutation).toBeUndefined();
+    expect(v.message).toMatch(/^Rd4 não resolve: o motor avalia que /);
+    expect(v.message).not.toMatch(/Qxd4/);
+  });
+
+  it('allowing mate is named as such', async () => {
+    const root = { ...ROOT, d2d4: { score: mate(-3), pv: ['d2d4', 'd5d4'] } };
+    const v = await playSolverMove(ex(), state, 'd2d4', { engine: engine(root), depth: 12, tolerance: 5 });
+    expect(v.kind === 'rejected' && v.message).toBe('Rd4 não resolve: permite mate em 3. O adversário responde Qxd4.');
+  });
+
+  it('does not change which moves are accepted', async () => {
+    const root = { ...ROOT, d2d4: { score: cp(880), pv: ['d2d4', 'd5d4'] } };
+    const v = await playSolverMove(ex(), state, 'd2d4', { engine: engine(root), depth: 12, tolerance: 5 });
+    expect(v.kind).toBe('solved');
   });
 });

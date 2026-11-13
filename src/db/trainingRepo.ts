@@ -8,6 +8,11 @@ export async function listExercises(): Promise<Exercise[]> {
   return getDb().exercises.orderBy('createdAt').reverse().toArray();
 }
 
+/** Exercises stored for one game, through the `gameId` index (Sprint 4.6, B2: links between analysis and exercises). */
+export async function exercisesForGame(gameId: string): Promise<Exercise[]> {
+  return getDb().exercises.where('gameId').equals(gameId).toArray();
+}
+
 export async function getExercise(id: string): Promise<Exercise | undefined> {
   return getDb().exercises.get(id);
 }

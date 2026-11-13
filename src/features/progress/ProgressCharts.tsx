@@ -7,23 +7,6 @@ import { evidenceDayKey } from '../../services/stats/stats';
 const tooltip = { contentStyle: { background: 'var(--surface-3)', border: '1px solid var(--border-strong)', borderRadius: 8, fontSize: 12 } };
 const tick = { fontSize: 11, fill: 'var(--text-faint)' };
 
-export function CountByDayChart({ data, name }: { data: { day: string; count: number }[]; name: string }) {
-  if (data.length === 0) return <p className="small muted">Sem dados ainda.</p>;
-  return (
-    <div className="chart-box">
-      <ResponsiveContainer>
-        <BarChart data={data} maxBarSize={36} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
-          <CartesianGrid stroke="var(--border)" vertical={false} />
-          <XAxis dataKey="day" tick={tick} />
-          <YAxis allowDecimals={false} tick={tick} />
-          <Tooltip {...tooltip} cursor={{ fill: 'var(--surface-2)' }} />
-          <Bar dataKey="count" name={name} fill="var(--info)" radius={[3, 3, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
 const CLASS_COLOR: Partial<Record<MoveClass, string>> = {
   best: 'var(--best)',
   excellent: 'var(--good)',

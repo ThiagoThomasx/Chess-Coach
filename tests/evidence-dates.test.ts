@@ -154,4 +154,24 @@ describe('calendar day of evidence in the charts (Sprint 4.5, P3-1)', () => {
     const t = Date.UTC(2025, 0, 10, 15);
     expect(evidenceDayKey({ at: t, source: 'exercise' })).toBe(dayKey(t));
   });
+  // Audit FA-3 (Sprint 4.6): only a PGN calendar date (00:00 UTC) is read in UTC; real instants use the local calendar.
+  it('game evidence dated by the import time (no PGN date) is read on the local day', async () => {
+    const { evidenceDayKey } = await import('../src/services/stats/stats');
+    const importedAt = new Date('2026-11-07T23:30:00-03:00').getTime(); // 02:30 UTC on the 8th
+    expect(evidenceDayKey({ at: importedAt, source: 'game' })).toBe('2026-11-07');
+  });
+
+  it('the month of the historical line follows the same rule (exercise on 31/10 at 22h; PGN date on 1/11)', async () => {
+    const { calendarMonthYear } = await import('../src/services/stats/stats');
+    expect(calendarMonthYear(new Date('2026-10-31T22:00:00-03:00').getTime())).toBe('10/2026'); // 01:00 UTC on 1/11
+    expect(calendarMonthYear(Date.UTC(2026, 10, 1))).toBe('11/2026'); // a PGN date: 21h on 31/10 in São Paulo
+    expect(calendarMonthYear(new Date('2026-12-31T23:59:00-03:00').getTime())).toBe('12/2026');
+  });
+
+  it('the day and month turnovers are local for real instants', async () => {
+    const { evidenceDayKey } = await import('../src/services/stats/stats');
+    expect(evidenceDayKey({ at: new Date('2026-10-31T23:59:00-03:00').getTime(), source: 'exercise' })).toBe('2026-10-31');
+    expect(evidenceDayKey({ at: new Date('2026-11-01T00:01:00-03:00').getTime(), source: 'exercise' })).toBe('2026-11-01');
+    expect(evidenceDayKey({ at: Date.UTC(2026, 10, 1), source: 'game' })).toBe('2026-11-01');
+  });
 });

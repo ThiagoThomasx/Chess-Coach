@@ -259,6 +259,69 @@
   color: var(--best);
 }
 
+/* A move with a derived exercise (Sprint 4.6, B2): move button + text badge link in one grid cell. */
+.moves .move-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.moves .move-cell > button {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  border-bottom: 0;
+}
+
+.exercise-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin-right: 0.3rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  flex: none;
+}
+
+a.exercise-badge:hover {
+  background: var(--surface-2);
+}
+
+a.exercise-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.exercise-badge-static {
+  min-height: 20px;
+  margin-right: 0.15rem;
+}
+
+.moves-legend {
+  margin-top: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.origin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  align-self: flex-start;
+}
+
 .controls {
   display: flex;
   gap: 0.35rem;
@@ -336,7 +399,7 @@
 
 .skill-row {
   display: grid;
-  grid-template-columns: 12rem 1fr 9rem;
+  grid-template-columns: 12rem minmax(0, 1fr) auto;
   gap: 0.9rem;
   align-items: center;
   padding: 0.55rem 0;
@@ -345,6 +408,14 @@
 
 .skill-row:last-child {
   border-bottom: 0;
+}
+
+/* The confidence tag takes its own width up to 14rem and wraps beyond it: "Em desenvolvimento · evidências
+   iniciais" overflowed a fixed 9rem column and scrolled the page sideways at 768 and 1280 px (audit AC-8). */
+.skill-row > .tag {
+  white-space: normal;
+  justify-self: start;
+  max-width: 14rem;
 }
 
 .skill-meter {

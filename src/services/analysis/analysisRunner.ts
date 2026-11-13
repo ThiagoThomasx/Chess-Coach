@@ -1,7 +1,8 @@
 import type { Color, Exercise, Game, GameAnalysis, Settings } from '../../types/domain';
 import { getGame, setUserColor } from '../../db/gamesRepo';
 import { analyzeGame, fenKey, replyLinesOf, type EngineLike } from './gameAnalyzer';
-import { dbEvalCache, getAnalysis, listAnalyses, replaceGameSkillEvents, saveAnalysis } from '../../db/analysisRepo';
+import { dbEvalCache, getAnalysis, listCompleteAnalyses, replaceGameSkillEvents, saveAnalysisIfGameExists } from '../../db/analysisRepo';
+import { progressSaver } from './progressSaver';
 import { getDb } from '../../db/database';
 import { addExercise, listExercises } from '../../db/trainingRepo';
 import { acceptsPlayedMove, buildExercise, selectExercisePositions, withSolutionTree } from '../exercises/generate';
@@ -50,33 +51,52 @@ export function isRunning(gameId: string): boolean {
 }
 
 /**
- * Starts (or resumes) a game analysis. Progress is persisted after every
- * position so a closed tab can resume later. On completion, skill evidence
- * and exercises are derived from the results.
+ * Starts (or resumes) a game analysis. Listeners are notified after every
+ * position; progress is persisted at most every PROGRESS_SAVE_INTERVAL_MS
+ * (a closed tab resumes from the stored positions and the eval cache), and
+ * the final state (complete, paused or error) is always saved when the run
+ * ends (Sprint 4.6, PA-1). On completion, skill evidence and exercises are
+ * derived from the results.
  */
 export function startAnalysis(game: Game, settings: Settings, engine: EngineLike, depth: number = settings.analysisDepth): Promise<AnalysisOutcome> {
   const existing = runs.get(game.id);
   if (existing) return existing.promise;
   const signal = { aborted: false };
+  // A game deleted mid-run (from the games list) stops the run at its next save and gets no analysis back (audit AC-1).
+  let gameGone = false;
+  const saveProgress = progressSaver(async (a) => {
+    if (!(await saveAnalysisIfGameExists(a))) gameGone = true;
+  });
+  let lastProgress: GameAnalysis | undefined;
   const promise = (async () => {
-    const previous = await getAnalysis(game.id);
-    const result = await analyzeGame(
-      game,
-      { depth, multiPv: settings.multiPv },
-      {
-        engine,
-        cache: dbEvalCache,
-        thresholds: settings.thresholds,
-        signal,
-        onProgress: async (a) => {
-          await saveAnalysis(a);
-          emit(a);
+    let result: GameAnalysis;
+    try {
+      const previous = await getAnalysis(game.id);
+      result = await analyzeGame(
+        game,
+        { depth, multiPv: settings.multiPv },
+        {
+          engine,
+          cache: dbEvalCache,
+          thresholds: settings.thresholds,
+          signal,
+          // Awaited by analyzeGame before the next position: saves never overlap or outlive the run.
+          onProgress: async (a) => {
+            lastProgress = a;
+            await saveProgress(a);
+            if (gameGone) signal.aborted = true;
+            emit(a);
+          },
         },
-      },
-      previous,
-    );
-    // A complete analysis is saved already marked for derivation, so a tab closed before it finishes is reconciled.
-    await saveAnalysis(result.status === 'complete' ? { ...result, derivation: 'pending' } : result);
+        previous,
+      );
+      // A complete analysis is saved already marked for derivation, so a tab closed before it finishes is reconciled.
+      await saveAnalysisIfGameExists(result.status === 'complete' ? { ...result, derivation: 'pending' } : result);
+    } catch (e) {
+      // A storage failure (quota, I/O) must not leave the run "running" on screen or on disk (audit AC-3).
+      await endWithError(lastProgress, e);
+      throw e;
+    }
     // Derives with the stored color: it may have been set (or the game deleted) while the analysis ran.
     const derivation = result.status === 'complete' ? await deriveCurrent(game.id, result, settings, engine) : null;
     emit(result);
@@ -84,6 +104,19 @@ export function startAnalysis(game: Game, settings: Settings, engine: EngineLike
   })().finally(() => runs.delete(game.id));
   runs.set(game.id, { signal, promise });
   return promise;
+}
+
+/** Stores and announces a failed run as an error (best effort: the storage may be what failed). */
+async function endWithError(last: GameAnalysis | undefined, e: unknown): Promise<void> {
+  if (!last) return;
+  const failed: GameAnalysis = { ...last, status: 'error', error: `Falha ao gravar a análise: ${e instanceof Error ? e.message : String(e)}`, updatedAt: Date.now() };
+  try {
+    await saveAnalysisIfGameExists(failed);
+  } catch (saveError) {
+    // The stored record stays 'running'; recoverInterruptedAnalyses turns it into 'paused' on the next start.
+    console.error('ChessQuest: não foi possível gravar o erro da análise', saveError);
+  }
+  emit(failed);
 }
 
 export function stopAnalysis(gameId: string, engine?: { stop(): void }): void {
@@ -254,7 +287,7 @@ async function removeUnattemptedExercises(gameId: string, side: Color): Promise<
  */
 export async function reconcileDerivations(settings: Settings, engine?: () => EngineLike | undefined): Promise<number> {
   const isPending = (a: GameAnalysis | undefined): a is GameAnalysis => a?.status === 'complete' && a.derivation === 'pending' && !isRunning(a.gameId);
-  const pending = (await listAnalyses()).filter(isPending);
+  const pending = (await listCompleteAnalyses()).filter(isPending);
   let reconciled = 0;
   for (const { gameId } of pending) {
     try {

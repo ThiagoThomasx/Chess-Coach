@@ -24,6 +24,15 @@ export function gameTime(g: Pick<Game, 'headers' | 'importedAt'>): number | unde
 }
 
 /**
+ * True for a PGN calendar date as `gameTime` stores it (00:00 UTC of that day). Real instants
+ * (import time, attempts) are never exactly midnight UTC in practice (millisecond clock), so
+ * they are read on the local calendar instead (audit FA-3, Sprint 4.6).
+ */
+export function isUtcCalendarDate(t: number): boolean {
+  return t % DAY_MS === 0;
+}
+
+/**
  * When the moves of a game happened, for dating its skill evidence (decay,
  * trend, "needs review"): the PGN date; without a reliable one, the import
  * time (the game was played at the latest then). `fallback` covers records
