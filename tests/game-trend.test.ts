@@ -136,3 +136,18 @@ describe('a move that keeps a decisive advantage is not a serious error (Sprint 
     expect(u.kind === 'compared' && [u.previous, u.recent]).toEqual([0, 2]);
   });
 });
+
+describe('the 80% boundary of a serious error (Sprint 4.7, closing review L4)', () => {
+  it('exactly 80% after the move is a kept advantage; just below it is a serious error', () => {
+    const at = (winAfter: number) => {
+      const games = Array.from({ length: 6 }, (_, i) => {
+        const g = game(i + 1, i < 3 ? 0 : 1);
+        return { ...g, reviews: g.reviews.map((r) => ({ ...r, winAfter })) };
+      });
+      const t = seriousErrorTrend(games);
+      return t.kind === 'compared' ? t.recent : null;
+    };
+    expect(at(80)).toBe(0);
+    expect(at(79.999)).toBe(1);
+  });
+});

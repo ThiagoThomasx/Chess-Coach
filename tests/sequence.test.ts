@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptedFrom, defenseRepliesFrom, goalFor, legacyTree, mainLine, mateBudget, normalizeExercise, playSolverMove, UNCERTAIN_MARGIN, type SolveState } from '../src/services/exercises/sequence';
+import { acceptedFrom, buildSolutionTree, defenseRepliesFrom, goalFor, legacyTree, mainLine, mateBudget, normalizeExercise, playSolverMove, UNCERTAIN_MARGIN, type SolveState } from '../src/services/exercises/sequence';
 import { DECISIVE_WIN_PERCENT } from '../src/services/analysis/classify';
 import type { EngineLike } from '../src/services/analysis/gameAnalyzer';
 import { withSolutionTree } from '../src/services/exercises/generate';
@@ -434,6 +434,59 @@ describe('conversion goal: keeping a decisive advantage solves it (Sprint 4.7, P
     const v = await playSolverMove(conv(), state, 'g1h1', { engine: counting, depth: 12, tolerance: 5 });
     expect(v.kind).toBe('solved');
     expect(calls).toEqual([12]);
+  });
+
+  it('in a two-move conversion, the node computed after the reply also accepts every decisive move (closing review M3)', async () => {
+    // 1.Kh1 (+5, kept by the floor) Kf8, then the next node is searched live: +12, +5 and +1.
+    const byFen: EngineLike = {
+      analyze: async (req) => {
+        const lines = req.searchMoves
+          ? req.searchMoves.map((u) => ({ multipv: 0, depth: 12, score: cp(u === 'a1a7' ? 1200 : 500), pv: [u] }))
+          : req.fen.split(' ')[1] === 'b'
+            ? [{ multipv: 1, depth: 12, score: cp(500), pv: ['g8f8'] }]
+            : [
+                { multipv: 1, depth: 12, score: cp(1200), pv: ['a1a7'] },
+                { multipv: 2, depth: 12, score: cp(500), pv: ['h1g1'] },
+                { multipv: 3, depth: 12, score: cp(100), pv: ['b2b3'] },
+              ];
+        return { fen: req.fen, depth: 12, multiPv: lines.length, timeMs: 0, complete: true, lines: lines.map((l, i) => ({ ...l, multipv: i + 1 })) } as never;
+      },
+    };
+    const twoMoves: ExerciseGoal = { kind: 'conversion', maxUserMoves: 2, targetWin: 97.5 };
+    const v = await playSolverMove(exercise({ goal: twoMoves, kind: 'conversion' }), state, 'g1h1', { engine: byFen, depth: 12, tolerance: 5, choose: () => 0 });
+    expect(v.kind).toBe('continue');
+    if (v.kind !== 'continue') return;
+    expect(v.state.node.accepted.map((m) => m.uci)).toEqual(['a1a7', 'h1g1']);
+    const second = await playSolverMove(exercise({ goal: twoMoves, kind: 'conversion' }), v.state, 'h1g1', { engine: byFen, depth: 12, tolerance: 5 });
+    expect(second.kind).toBe('solved');
+  });
+
+  it('buildSolutionTree applies the floor of a conversion, and only of a conversion (closing review M3)', async () => {
+    const root: EngineLike = {
+      analyze: async (req) => ({ fen: req.fen, depth: 12, multiPv: 3, timeMs: 0, complete: true, lines: [
+        { multipv: 1, depth: 12, score: cp(1200), pv: ['a1a7'] },
+        { multipv: 2, depth: 12, score: cp(500), pv: ['b2b7'] },
+        { multipv: 3, depth: 12, score: cp(100), pv: ['g1h1'] },
+      ] }) as never,
+    };
+    const opts = { depth: 12, multiPv: 3, tolerance: 5 };
+    const conversionTree = await buildSolutionTree(root, ROOKS, { kind: 'conversion', maxUserMoves: 1, targetWin: 97.5 }, opts);
+    expect(conversionTree.accepted.map((m) => m.uci)).toEqual(['a1a7', 'b2b7']);
+    const singleTree = await buildSolutionTree(root, ROOKS, { kind: 'single', maxUserMoves: 1, targetWin: 97.5 }, opts);
+    expect(singleTree.accepted.map((m) => m.uci)).toEqual(['a1a7']);
+  });
+
+  it('the floor sits at 80%: a line just above it is accepted, one centipawn less is not (closing review L4)', () => {
+    // Centipawns at a given win% (inverse of the logistic model): 80% ≈ 376.5 cp.
+    const cpAt = (win: number) => -Math.log(100 / win - 1) / 0.00368208;
+    const at80 = Math.ceil(cpAt(80) * 1000) / 1000;
+    const analysis = { fen: ROOKS, depth: 16, multiPv: 2, timeMs: 0, complete: true, lines: [
+      { multipv: 1, depth: 16, score: cp(1200), pv: ['a1a7'] },
+      { multipv: 2, depth: 16, score: cp(at80), pv: ['b2b7'] },
+    ] } as never;
+    expect(acceptedFrom(analysis, 5, undefined, DECISIVE_WIN_PERCENT).map((m) => m.uci)).toEqual(['a1a7', 'b2b7']);
+    const below = { ...(analysis as object), lines: [(analysis as { lines: unknown[] }).lines[0], { multipv: 2, depth: 16, score: cp(at80 - 1), pv: ['b2b7'] }] } as never;
+    expect(acceptedFrom(below, 5, undefined, DECISIVE_WIN_PERCENT).map((m) => m.uci)).toEqual(['a1a7']);
   });
 
   it('the solution tree of a conversion accepts every line that stays decisive', () => {

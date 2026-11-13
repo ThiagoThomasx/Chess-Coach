@@ -294,3 +294,11 @@ describe('one rule for automatic and manual creation (Sprint 4.7, review M1)', (
     expect(noErrorToTrain(deeperAccepts, { uci: 'f3d4', winAfter: 30 }, 11)).toBe('tree');
   });
 });
+
+describe('the 80% boundary of training eligibility (Sprint 4.7, closing review L4)', () => {
+  it('a conversion is not built from a move that kept exactly 80%', () => {
+    const conversion = { goal: { kind: 'conversion' as const, maxUserMoves: 2, targetWin: 97.5 } };
+    expect(playedMeetsGoal(conversion, 80)).toBe(true);
+    expect(playedMeetsGoal(conversion, 79.999)).toBe(false);
+  });
+});

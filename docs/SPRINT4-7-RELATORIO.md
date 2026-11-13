@@ -101,19 +101,25 @@ O perfil, os exercícios e as recomendações não afirmam conclusões que os da
 | `tests/training.test.ts` | 3 | PD-2: `playedMeetsGoal` só para conversão; `noErrorToTrain`, regra única da derivação e da criação manual (M1) |
 | `tests/game-trend.test.ts` | 1 | PD-2: 86% depois do lance sai da contagem; 79% fica |
 | `e2e/honest-diagnosis.spec.ts` | 1 | PD-3 na tela: lado do adversário, lado próprio e filtro manual |
+| `tests/conversion-derivation.test.ts` | 2 | PD-2, derivação automática com motor determinístico: +12 → +5 é "Erro" mas não gera conversão; +12 → +1 gera (revisão do PR, M2) |
+| `tests/sequence.test.ts` (fechamento) | 3 | Conversão de 2 lances: o nó calculado depois da resposta aceita os lances decisivos; `buildSolutionTree` aplica o piso só na conversão; fronteira de 80% (revisão do PR, M3 e L4) |
+| `tests/game-trend.test.ts`, `tests/training.test.ts` (fechamento) | 2 | Fronteira exata de 80% no indicador e na elegibilidade (L4) |
+| `e2e/honest-diagnosis.spec.ts` (fechamento) | 1 | Criação manual: recusa a conversão de um lance que manteve a vantagem decisiva e cria a de um que a perdeu (revisão do PR, M1) |
 
 Os testes unitários foram escritos antes da correção e falharam primeiro (vermelho → verde). Nenhum teste existente foi removido ou enfraquecido.
+
+**Prova de que os testes do fechamento pegam a regressão (mutação temporária, código restaurado e conferido com `git diff`):** desligar a regra na criação manual, na derivação automática, no nó calculado na hora ou na árvore, ou trocar `>=` por `>` no indicador e na elegibilidade, faz pelo menos um teste novo falhar. A única mutação não detectada é `>=` → `>` no piso da árvore: com pontuações em centipawns a expectativa nunca dá exatamente 80,000…%, então ela não muda o comportamento.
 
 ## 4. Resultados [E]
 
 | Verificação | Resultado |
 |---|---|
 | Typecheck | ok |
-| Vitest | **490/490** + 1 ignorado (a medição, sem `CORPUS_PGN`); 476 → 490 |
+| Vitest | **497/497** + 1 ignorado (a medição, sem `CORPUS_PGN`); 476 → 497 |
 | Stockfish real isolado | **24/24** |
-| Cobertura (services + db) | linhas 94,74% · statements 91,57% · branches 84,41% · funções 89,60% |
+| Cobertura (services + db) | linhas 95,22% · statements 91,96% · branches 84,62% · funções 89,76% |
 | Build | ok |
-| Playwright | **85/85** (84 → 85), porta 4176 |
+| Playwright | **86/86** (84 → 86), porta 4176 |
 
 ## 5. Efeitos visíveis para o usuário
 
@@ -169,3 +175,21 @@ Segundo revisor separado, somente leitura, sobre a branch inteira contra a `main
 | F3 | LOW | T-1 registrado só neste relatório | Mantido assim por decisão do usuário: a baseline é atualizada depois do merge |
 
 Na mesma etapa, a revisão do diff encontrou e corrigiu uma ambiguidade de texto: o indicador se chamava "Erros graves por partida", mesmo nome da classe "Erro grave", mas conta "Erro" e "Erro grave" e exclui lances com vantagem decisiva mantida. Agora diz "erros sérios" e explica a diferença na própria tela. A mensagem da criação manual também deixa claro que o lance continua sendo um erro pelo motor, mas não gera exercício.
+
+### Revisão do PR #10 e fechamento das lacunas
+
+- **CI do commit `3e43621`:** job `verify` todo verde.
+  - typecheck ok;
+  - Vitest 490 + 1 ignorado, com os 24 testes do motor real;
+  - build ok;
+  - Playwright 85.
+- **Terceiro revisor separado:** veredito "aprovado com ressalvas", sem CRITICAL nem HIGH. As ressalvas eram três lacunas de teste (MEDIUM), todas fechadas com um commit só de testes:
+
+| # | Sev. | Lacuna | Situação |
+|---|---|---|---|
+| M1 | MEDIUM | A chamada de `noErrorToTrain` na criação manual não tinha teste | **Fechada**: E2E com o motor real |
+| M2 | MEDIUM | O desvio em `deriveFromAnalysis` só era exercitado pela medição, que não roda no CI | **Fechada**: `tests/conversion-derivation.test.ts` |
+| M3 | MEDIUM | O segundo lance da conversão e a ligação do piso em `buildSolutionTree` não eram testados | **Fechada**: dois testes em `tests/sequence.test.ts` |
+| L4 | LOW | Fronteira exata de 80% | **Fechada** no indicador e na elegibilidade |
+| L5 | LOW | A nota "Só: …" do filtro herda o tamanho do rótulo (`.field > span` vence `.xs`) | Mantida (cosmético; fora do commit só de testes) |
+| L6–L8 | LOW | Texto longo do indicador e da mensagem; teste de competências parcialmente tautológico | Mantidos e registrados |
