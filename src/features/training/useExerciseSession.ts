@@ -7,6 +7,7 @@ import { recordAttempt } from '../../db/trainingRepo';
 import { getEngine } from '../../services/engine/engineService';
 import { badgeForClass, solverMoveClass, type PlacedMoveBadge } from '../../services/analysis/moveBadge';
 import type { MoveVerdict } from '../../services/exercises/sequence';
+import { numberedLine, type RefutationMove } from '../../services/exercises/refutation';
 
 /** 'uncertain': the engine could not judge the move with confidence; nothing is recorded. */
 export type SessionStatus = 'playing' | 'checking' | 'solved' | 'failed' | 'revealed' | 'uncertain';
@@ -14,6 +15,27 @@ export type SessionStatus = 'playing' | 'checking' | 'solved' | 'failed' | 'reve
 export interface Feedback {
   kind: 'good' | 'bad' | 'info' | 'warn';
   text: string;
+  /** Rejected move: the opponent's line that punishes it, numbered SAN. */
+  line?: string;
+  /** Engine figures kept out of the main text (loss in p.p., tolerance, depth). */
+  detail?: string;
+}
+
+/** A rejected move's refutation, replayable on the board from the position after the move. */
+interface RefutationReplay {
+  before: string;
+  userUci: string;
+  after: string;
+  moves: RefutationMove[];
+}
+
+type RejectedVerdict = Extract<MoveVerdict, { kind: 'rejected' }>;
+
+function rejectedFeedback(v: RejectedVerdict, after: string, tolerance: number): Feedback {
+  const line = v.refutation ? numberedLine(after, v.refutation.line.map((m) => m.san)) : undefined;
+  const depth = v.assessment ? `, profundidade ${v.assessment.depth}` : '';
+  const detail = v.winLoss !== undefined ? `A expectativa cai ${v.winLoss.toFixed(1)} p.p. em relação ao melhor lance (tolerância ${tolerance} p.p.${depth}).` : undefined;
+  return { kind: 'bad', text: v.message, ...(line ? { line } : {}), ...(detail ? { detail } : {}) };
 }
 
 const REPLY_DELAY_MS = 450;
@@ -39,6 +61,8 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
   const [retries, setRetries] = useState(0);
   const [practice, setPractice] = useState(false);
   const [badge, setBadge] = useState<PlacedMoveBadge | null>(null);
+  const [refutation, setRefutation] = useState<RefutationReplay | null>(null);
+  const [refutationShown, setRefutationShown] = useState(false);
   const startedAt = useRef(Date.now());
   /** This run already recorded a revealed attempt (solution shown, or the move named by the last hint). */
   const revealedRun = useRef(false);
@@ -115,7 +139,8 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
           return;
         case 'rejected':
           setStatus('failed');
-          setFeedback({ kind: 'bad', text: v.message });
+          setFeedback(rejectedFeedback(v, after, ex.tolerance));
+          if (v.refutation) setRefutation({ before, userUci: uci, after, moves: v.refutation.line });
           void finish(false, false, played);
           return;
         case 'solved':
@@ -166,6 +191,9 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     const line = mainLine(ex.tree);
     setStatus('revealed');
     setBadge(null);
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setRefutationShown(false);
     setFeedback({ kind: 'warn', text: `Solução: ${ex.tree.accepted.map((m) => m.san).join(' ou ')}. Demonstrando a sequência calculada…` });
     let cur = ex.fen;
     setFen(cur);
@@ -183,8 +211,32 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     if (wasPlaying) void finish(false, true, moves);
   };
 
+  /** Plays the refutation on the board after a rejected move. Display only: nothing is recorded. */
+  const showRefutation = () => {
+    if (status !== 'failed' || !refutation) return;
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setRefutationShown(true);
+    // The line may move or capture the graded piece: the badge would then mark the wrong square.
+    setBadge(null);
+    show(refutation.before, refutation.after, refutation.userUci);
+    let cur = refutation.after;
+    refutation.moves.forEach((m, i) => {
+      timers.current.push(
+        setTimeout(() => {
+          const next = applyUci(cur, m.uci);
+          if (!next) return;
+          show(cur, next, m.uci);
+          cur = next;
+        }, DEMO_STEP_MS * (i + 1)),
+      );
+    });
+  };
+
   const retry = () => {
     timers.current.forEach(clearTimeout);
+    setRefutation(null);
+    setRefutationShown(false);
     // A run that saw the solution (or the move named by the last hint) makes the retry assisted (audit A2-2).
     setRetries((r) => (status === 'failed' || status === 'revealed' || revealedRun.current ? r + 1 : 0));
     revealedRun.current = false;
@@ -216,6 +268,12 @@ export function useExerciseSession(raw: Exercise, settings: Settings) {
     hint,
     reveal,
     retry,
+    /** True when the failed move has a refutation line that can be shown on the board. */
+    canShowRefutation: status === 'failed' && refutation !== null,
+    showRefutation,
+    refutationShown,
+    /** Position after the rejected move while its refutation is on the board, else null. */
+    refutationStart: refutationShown && refutation ? refutation.after : null,
     progress: { done: solve.userMoves, total: ex.goal.maxUserMoves, kind: ex.goal.kind },
   };
 }

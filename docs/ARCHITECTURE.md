@@ -23,7 +23,13 @@ GamesPage ── importPgn ──▶ db.games
 AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
                                    ├─ terminalAnalysis | dbEvalCache | UciEngine.analyze (Worker)
                                    ├─ buildReviews → reviewMove → classifyMove
-                                   └─ onProgress → db.analyses (a cada posição)
+                                   └─ onProgress → emit (a cada posição, em memória)
+                                                 → db.analyses no máximo a cada 2 s (progressSaver, PA-1);
+                                                   o estado final (concluída, pausada, erro) é sempre gravado;
+                                                   toda gravação confere, na mesma transação, que a partida existe
+                                                   (saveAnalysisIfGameExists): partida excluída → a execução para;
+                                                   falha de gravação → estado 'error' gravado e anunciado (auditoria AC-1/AC-3)
+AnalysisPage ── useLiveAnalysis: registro gravado + emit do runner (o mais novo por updatedAt)
              concluída ──▶ deriveFromAnalysis (também ao definir a cor: changeUserColor)
                                    ├─ eventsFromGame (datados pela partida: gameEvidenceTime) → db.skillEvents
                                    └─ selectExercisePositions → buildExercise → withSolutionTree
@@ -33,9 +39,14 @@ AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
              exercícios e evidências batem com a cor salva); App, ao abrir: redateGameEvidence (idempotente),
              removeOrphanExerciseEvidence (idempotente) e depois reconcileDerivations refaz os 'pending'
              addExercise(ex, guard): a cor da partida é conferida na mesma transação da gravação
+AnalysisPage ── useLiveQuery(exercisesForGame: índice gameId) → linkedExercisesByPly (gameId + ply, conferido pelo FEN)
+             → selo "Ex." na lista de lances e "Abrir exercício" no painel (B2)
+ExerciseSolver ── resolvido/revelado → ExerciseOrigin: partida (consulta viva) + revisão do lance (leitura única,
+             não viva: o registro tem todas as posições) → link /analysis/:gameId?ply=N
 ExerciseSolver ── recordAttempt relê o exercício na transação (removido → nada é gravado)
 ExerciseSolver ── validateStep / judgeWithEngine ──▶ recordAttempt (attempts + srs + skillEvents, 1 transação)
-Dashboard/Evolução ── useLiveQuery ──▶ estimateProfile, stats, nextTraining
+Dashboard/Evolução/treino ── useLiveQuery(listCompleteAnalyses: where status = complete) ──▶ estimateProfile, stats, nextTraining
+GamesPage ── useLiveQuery(analysisStatuses: só o índice status, nenhum registro lido)
 ```
 
 ## Extensões previstas

@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Bookmark, ChevronDown, Crown, FileUp, ListChecks } from 'lucide-react';
 import { getDb } from '../../db/database';
+import { listCompleteAnalyses } from '../../db/analysisRepo';
 import { useSettings } from '../../hooks/useSettings';
 import { EmptyState } from '../../components/feedback/EmptyState';
 import { nextTraining } from '../../services/recommendations/recommend';
@@ -19,7 +20,8 @@ function useDashboardData() {
     const db = getDb();
     const [games, analyses, exercises, attempts, events, bookmarks, openingAttempts, custom] = await Promise.all([
       db.games.toArray(),
-      db.analyses.toArray(),
+      // Only complete analyses feed the stats: running ones (rewritten during analysis) are not loaded (PA-1).
+      listCompleteAnalyses(),
       db.exercises.toArray(),
       db.attempts.orderBy('at').toArray(),
       db.skillEvents.toArray(),
@@ -219,7 +221,7 @@ export function DashboardPage() {
             <div className="stack" style={{ marginTop: '0.75rem', gap: '0.4rem' }}>
               {pendingBookmarks.length === 0 && <p className="small muted">Marque posições na análise para revisá-las depois.</p>}
               {pendingBookmarks.map((b) => (
-                <Link key={b.id} to={`/analysis/${b.gameId}?ply=${b.ply}`} className="small row">
+                <Link key={b.id} to={`/analysis/${b.gameId}?ply=${b.ply}&review=1`} className="small row">
                   <Bookmark size={13} /> Meia-jogada {b.ply}
                   <span className="faint xs">{new Date(b.createdAt).toLocaleDateString('pt-BR')}</span>
                 </Link>

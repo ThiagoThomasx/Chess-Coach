@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Library, Trash2 } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { deleteGame, getGame } from '../../db/gamesRepo';
+import { analysisStatuses } from '../../db/analysisRepo';
 import { changeUserColor, colorChangeFailureMessage, derivationMessage, isRunning } from '../../services/analysis/analysisRunner';
 import { getEngine } from '../../services/engine/engineService';
 import { useSettings } from '../../hooks/useSettings';
@@ -28,7 +29,8 @@ function openingName(g: Game): string {
 export function GamesPage() {
   const navigate = useNavigate();
   const games = useLiveQuery(() => getDb().games.orderBy('importedAt').reverse().toArray(), [], undefined);
-  const statuses = useLiveQuery(async () => new Map((await getDb().analyses.toArray()).map((a) => [a.gameId, a.status])), [], new Map<string, AnalysisStatus>());
+  // Status only, from the index: the list never loads analyses with their positions (Sprint 4.6, PA-1).
+  const statuses = useLiveQuery(analysisStatuses, [], new Map<string, AnalysisStatus>());
   const imports = useLiveQuery(() => getDb().imports.orderBy('importedAt').reverse().limit(10).toArray(), [], []);
   const settings = useSettings();
   const toast = useToast();

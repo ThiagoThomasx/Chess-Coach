@@ -58,8 +58,12 @@ test('import → analyze → explain → exercise → solve → reload → profi
   await expect(page.locator('.engine-line').first()).toBeVisible();
 
   // 8. The position becomes an exercise (auto-generated, or via the button).
-  await page.getByTestId('create-exercise').click();
-  await page.getByTestId('open-created-exercise').click();
+  // Sprint 4.6, B2: once the move has an exercise (derived automatically or created here), the action opens it.
+  const openExercise = page.getByTestId('open-exercise');
+  const createExercise = page.getByTestId('create-exercise');
+  await expect(openExercise.or(createExercise)).toBeVisible();
+  if (await createExercise.isVisible()) await createExercise.click();
+  await openExercise.click({ timeout: 120_000 });
   await expect(page.locator('#exercise-board-square-e1')).toBeVisible();
 
   // 9–11. Solve it on the board with the stored best move; feedback + persisted result.

@@ -357,7 +357,7 @@
   color: var(--text-faint);
 }
 
-.action-panel .callout + .action-row {
+.action-panel .feedback-region:not(:empty) + .action-row {
   margin-top: 0.85rem;
 }
 
@@ -741,4 +741,12 @@
 
 .swatch-better {
   background: rgba(116, 183, 127, 0.9);
+}
+
+/* B3: the two windows compared side by side, in the stat style (Sprint 4.6). */
+.trend-compare {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
 }

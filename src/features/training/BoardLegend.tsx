@@ -5,7 +5,7 @@ export interface LegendMove {
   from: string;
   to: string;
   /** Who played the highlighted move. */
-  by: 'you' | 'opponent' | 'solution';
+  by: 'you' | 'opponent' | 'solution' | 'refutation';
   san?: string;
 }
 
@@ -15,9 +15,11 @@ type Props = {
   side: Color;
 };
 
+const WHO: Record<LegendMove['by'], string> = { you: 'Seu lance', solution: 'Lance da solução', refutation: 'Linha de refutação', opponent: 'Último lance do adversário' };
+
 /** Explains what the board highlights mean, so the colors are never left to interpretation. */
 export function BoardLegend({ move, badge, side }: Props) {
-  const who = move?.by === 'you' ? 'Seu lance' : move?.by === 'solution' ? 'Lance da solução' : 'Último lance do adversário';
+  const who = move ? WHO[move.by] : '';
   const notation = move ? (move.san ?? `${move.from}→${move.to}`) : '';
   return (
     <div className="board-legend xs" data-testid="board-legend">

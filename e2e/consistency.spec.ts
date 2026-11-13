@@ -151,3 +151,31 @@ test('the dashboard card also follows time while the page stays open (audit AI-2
   await expect(page.getByTestId('stat-pending-reviews')).toHaveText('1');
   await expect(page.getByRole('navigation', { name: 'Navegação principal' }).getByLabel('1 revisões pendentes')).toHaveText('1');
 });
+
+test('"Pendentes" on Treinar follows the clock without changing any data (audit FA-4)', async ({ page }) => {
+  await page.clock.install();
+  await importGame(page);
+  const now = await page.evaluate(() => Date.now());
+  await put(page, 'exercises', [
+    exercise('overdue', { box: 1, dueAt: now - 60_000, lastReviewedAt: now - DAY }, undefined, '6k1/5ppp/8/8/8/8/5PPP/1R4K1 w - - 0 1'),
+    exercise('just-due', { box: 1, dueAt: now + 60_000, lastReviewedAt: now - DAY }, undefined, '6k1/5ppp/8/8/8/8/5PPP/2R3K1 w - - 0 1'),
+    exercise('soon', { box: 1, dueAt: now + 4 * 60_000, lastReviewedAt: now - DAY }),
+  ]);
+  await page.goto('/#/train');
+  await page.reload();
+  const pending = page.getByTestId('open-pending');
+  await expect(pending).toHaveText(/Pendentes \(1\)/);
+  const attempts = await readTable(page, 'attempts');
+  const events = await readTable(page, 'skillEvents');
+  const exercises = await readTable(page, 'exercises');
+
+  await page.clock.fastForward('02:00');
+  await expect(pending).toHaveText(/Pendentes \(2\)/);
+  await page.clock.fastForward('03:00');
+  await expect(pending).toHaveText(/Pendentes \(3\)/);
+
+  // Only time passed: no attempt, evidence or schedule was written.
+  expect(await readTable(page, 'attempts')).toEqual(attempts);
+  expect(await readTable(page, 'skillEvents')).toEqual(events);
+  expect(await readTable(page, 'exercises')).toEqual(exercises);
+});

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Eye, Lightbulb, RotateCcw, SkipForward } from 'lucide-react';
+import { ArrowLeft, Eye, Lightbulb, Play, RotateCcw, SkipForward } from 'lucide-react';
 import { getDb } from '../../db/database';
 import { useSettings } from '../../hooks/useSettings';
 import { ChessBoard } from '../../components/board/ChessBoard';
@@ -15,6 +15,8 @@ import { TaskPrompt } from './TaskPrompt';
 import { BoardLegend, type LegendMove } from './BoardLegend';
 import { ReferenceSolution } from './ReferenceSolution';
 import { ExerciseDetails } from './ExerciseDetails';
+import { ExerciseOrigin } from './ExerciseOrigin';
+import { isOriginVisible } from '../../services/exercises/origin';
 import { useExerciseSession, type SessionStatus } from './useExerciseSession';
 import type { Exercise, Settings } from '../../types/domain';
 
@@ -57,7 +59,9 @@ export function Solver({ ex, settings, session }: SolverProps) {
   const previous = s.lastMove === null && s.fen === ex.fen ? lastMoveBefore(game, ex.ply, ex.fen) : null;
   const shownMove = s.lastMove ?? (previous ? { from: previous.from, to: previous.to } : null);
   const mover = sideToMove(s.fen) === 'w' ? 'b' : 'w';
-  const moverRole: LegendMove['by'] = mover !== ex.sideToMove ? 'opponent' : s.status === 'revealed' ? 'solution' : 'you';
+  // While the refutation plays, every move after the rejected one belongs to the engine's line.
+  const inRefutation = s.refutationStart !== null && s.fen !== s.refutationStart;
+  const moverRole: LegendMove['by'] = inRefutation ? 'refutation' : mover !== ex.sideToMove ? 'opponent' : s.status === 'revealed' ? 'solution' : 'you';
   const legendMove: LegendMove | null = previous ? { from: previous.from, to: previous.to, by: 'opponent', san: previous.san } : s.lastMove ? { ...s.lastMove, by: moverRole } : null;
 
   const needsSolution = s.status === 'failed' || s.status === 'uncertain';
@@ -95,11 +99,27 @@ export function Solver({ ex, settings, session }: SolverProps) {
         </div>
         <div className="solver-side stack">
           <section className="panel action-panel" aria-label="Ações do exercício">
-            {s.feedback && (
-              <p className={`callout callout-${s.feedback.kind} fade-in`} role="status" aria-live="polite" data-testid="exercise-feedback">
-                {s.feedback.text}
-              </p>
-            )}
+            {/* Always mounted, so screen readers announce the first feedback too (audit FA-5). */}
+            <div className="feedback-region" role="status" aria-live="polite" data-testid="exercise-feedback-region">
+              {s.feedback && (
+                <div className={`callout callout-${s.feedback.kind} fade-in`} data-testid="exercise-feedback">
+                  <div className="stack" style={{ gap: '0.35rem' }}>
+                    <p>{s.feedback.text}</p>
+                    {s.feedback.line && (
+                      <p>
+                        Linha de refutação: <span className="mono" data-testid="refutation-line">{s.feedback.line}</span>
+                      </p>
+                    )}
+                    {s.feedback.detail && (
+                      <details className="xs muted" data-testid="feedback-detail">
+                        <summary>Detalhes do motor</summary>
+                        {s.feedback.detail}
+                      </details>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="row action-row">
               {s.status === 'playing' && (
                 <>
@@ -116,6 +136,11 @@ export function Solver({ ex, settings, session }: SolverProps) {
                     <Eye size={15} /> Ver solução
                   </button>
                 </>
+              )}
+              {s.canShowRefutation && (
+                <button className="btn" onClick={s.showRefutation} data-testid="show-refutation">
+                  <Play size={15} /> {s.refutationShown ? 'Ver a refutação de novo' : 'Ver a refutação no tabuleiro'}
+                </button>
               )}
               {needsSolution && (
                 <button className={session ? 'btn' : 'btn btn-primary'} onClick={s.reveal} data-testid="reveal">
@@ -145,6 +170,8 @@ export function Solver({ ex, settings, session }: SolverProps) {
               </p>
             )}
           </section>
+          {/* Origin in the game only after solving or revealing: before, the game's analysis would give the answer away (B2). */}
+          {isOriginVisible(s.status) && <ExerciseOrigin ex={ex} />}
           {done && <ReferenceSolution ex={ex} />}
           <ExerciseDetails ex={ex} attempts={attempts} canDelete={!session} />
         </div>

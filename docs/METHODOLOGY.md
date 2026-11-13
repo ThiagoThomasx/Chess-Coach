@@ -129,6 +129,14 @@ Critérios mínimos (`checkCandidate`): análise completa, profundidade ≥ mín
 
 **Troca de lado** (decisão D3, Sprint 4.4): ao trocar a cor de uma partida entre brancas e pretas, os exercícios dela do lado antigo que **nunca foram tentados** são removidos na mesma transação que salva a cor; os já tentados ficam, com o histórico. Vale também para exercícios criados manualmente (não há campo que os distinga). Só acontece com a análise concluída, quando a mensagem informa quantos foram removidos. Remover a cor ou defini-la pela primeira vez não remove exercícios.
 
+### 5.1.1 Vínculo com a partida (Sprint 4.6, B2)
+
+Um exercício de partida guarda `source: 'game'`, `gameId` e `ply`: a meia-jogada do lance **jogado** na partida; a posição do exercício é a anterior a esse lance. É esse vínculo — sem tabela paralela — que liga a análise ao exercício (`services/exercises/origin.ts`):
+
+- **Na análise**, o lance recebe o selo "Ex." (link para o exercício) e a ação "Criar exercício desta posição" vira "Abrir exercício". O FEN não decide a associação, só a **confere**: um `ply` que não leva à posição do exercício (registro inconsistente) não é ligado, para nunca abrir o lance errado. Exercícios de outra partida com a mesma posição continuam sem selo; criar de novo devolve o existente (deduplicação de `addExercise`).
+- **No exercício**, a origem aparece só depois de **resolvido ou revelado** (falha ou veredito incerto não bastam: a análise da partida entregaria a resposta). Antes disso, "Origem e histórico" mostra só o texto "Exercício de uma partida sua · meia-jogada N", sem link. O resumo diz quem jogou o lance (pela cor da partida: você, seu adversário ou "foi jogado" quando a cor não está definida), a classificação e a perda gravadas na revisão **dessa mesma posição** e o melhor lance; nada é inferido. Sem a partida (excluída), a seção avisa e não mostra link.
+- **O retorno** usa a rota existente `/analysis/:gameId?ply=N`, que abre a posição depois do lance N com a revisão dele. Abrir um lance por link **não** conta como revisão de uma marcação: só o link da lista "Posições marcadas" do painel (`&review=1`) marca como revisada a marcação que já existia ao abrir; uma marcação criada depois, na mesma tela, continua pendente (auditoria consolidada, AC-2).
+
 ### 5.2 Tipos e objetivos (`goalFor`)
 
 | Tipo | Quando | Lances do usuário |
@@ -154,6 +162,17 @@ Construída com o motor ao criar o exercício: em cada posição do usuário, bu
 5. Sem motor disponível, um lance fora da lista **não** é julgado ("não verificável", nada é registrado).
 6. Aceito: se atingiu o limite de lances → resolvido. Senão, o adversário responde com uma das respostas da árvore (escolha aleatória entre as equivalentes, para variar o treino); se o lance era uma alternativa não expandida, o motor calcula a resposta e o próximo nó na hora. Sem motor nesse caso, o exercício termina como resolvido, com aviso de que a continuação não foi verificada.
 7. Limite rígido: 4 lances do usuário por exercício.
+
+**Explicação do lance recusado** (Sprint 4.6, B1; `services/exercises/refutation.ts`). A regra de acerto e erro não muda: só o texto muda.
+
+- **Refutação**: a resposta do adversário e até 4 meias-jogadas, em SAN numerada, tiradas da linha do lance do aluno na **mesma** busca comparável que o recusou. Se essa busca não trouxe resposta, ou se o veredito veio da busca da posição resultante, nenhuma refutação é mostrada, e o texto diz "o motor avalia que…".
+- **Consequência**, a primeira regra que se aplica:
+  1. a pontuação do lance é mate contra o aluno → "permite mate em N";
+  2. a linha do lance chega a um ponto estável (§4.2) com perda de material ≥ 3 pontos, e a linha de referência, **também em ponto estável**, não perde o mesmo → "perde material (cerca de uma peça/torre/dama)" (3–4, 5–7, ≥ 8 pontos). Sem linha de referência estável não há comparação, e a regra de material não é usada (auditoria consolidada, AC-7): o melhor lance poderia perder o mesmo material;
+  3. a linha de referência ganha, em ponto estável, ≥ 3 pontos a mais que a do aluno → "deixa de ganhar material (cerca de …)";
+  4. senão, a mudança de faixa de expectativa, do lance de referência para o do aluno: vantagem decisiva (≥ 80%), vantagem (≥ 60%), igualdade (> 40%), desvantagem (> 20%), posição perdida. Na mesma faixa: "reduz a vantagem", "piora a posição" ou "piora uma posição já difícil".
+- A perda em p.p., a tolerância e a profundidade ficam em "Detalhes do motor", recolhido.
+- "Ver a refutação no tabuleiro" reproduz a linha a partir da posição depois do lance. É só exibição: não grava tentativa nem altera a revisão espaçada.
 
 O registro de tentativa distingue: resolvido sem ajuda, com dicas (cada dica conta; repetir depois de errar na mesma sessão conta como uma dica) e solução consultada. **A dica 3 mostra o lance**: a partir dela, a tentativa conta como solução revelada (sem crédito, volta em 10 minutos), e o botão avisa antes (Sprint 4.4). A tentativa revelada é gravada **no momento em que a dica 3 aparece**, como em "Ver solução": sair da tela ou recarregar antes de jogar não transforma o lance mostrado em acerto independente. Depois disso, "Resolver de novo" conta como ajuda, como depois de ver a solução (auditoria pós-merge A2-1 e A2-2). Assim "com ajuda" significa ter precisado de uma pista, não ter recebido a resposta.
 
@@ -258,5 +277,19 @@ Antes, uma competência com muitas evidências e taxa baixa aparecia como "desem
 **Revisão vencida** = exercício já tentado cuja data de revisão chegou (`srs.lastReviewedAt` definido e `dueAt ≤ agora`). A barra lateral, o dashboard e a Evolução usam essa mesma regra (Sprint 4.5), e a barra lateral recalcula a cada minuto, então uma revisão que vence com o app aberto aparece sem recarregar. Um exercício novo nasce com `dueAt` = criação, mas é material novo, não revisão; na lista de treino ele continua marcado "Pendente" como antes. Exercícios de motivo bilateral criados antes de existir `motifSide` contam como tática do próprio jogador.
 
 **Sessão guiada** (`/train/session`): fila de até `dailyGoal` exercícios, sem repetir nenhum, nesta ordem: revisões vencidas (mais atrasadas primeiro), exercícios do foco recomendado, exercícios a ±1 da dificuldade-alvo da competência. Exercícios não vencidos cuja última tentativa foi um acerto sem ajuda ficam de fora: a repetição espaçada já decidiu quando eles voltam. Também ficam de fora os tentados há menos de 10 minutos (janela de prática), porque uma nova tentativa não seria gravada. O plano fica só no armazenamento local do navegador, válido até o fim do dia ou até "Encerrar"; os resultados são as tentativas normais (mesma janela de prática, mesmo reagendamento, mesmas evidências de perfil).
+
+**Revisão vencida na tela Treinar** (auditoria FA-4, Sprint 4.6): a tela Treinar também recalcula a cada minuto (o mesmo `useMinute` da barra lateral e do dashboard). O botão "Pendentes (N)" mantém sua regra (revisões vencidas e exercícios novos), e a passagem do tempo só muda o que é exibido: nenhuma tentativa, evidência ou agenda é gravada.
+
+**"Minhas partidas estão melhorando?"** (Evolução, Sprint 4.6, B3; `seriousErrorTrend` em `services/stats/stats.ts`):
+
+- **Métrica**: erros graves por partida = lances **do usuário** classificados como `mistake` ("Erro") ou `blunder` ("Erro grave") ÷ partidas. Usa a classificação já gravada na análise; os lances do adversário não contam.
+- **Amostra**: só partidas com análise concluída e cor do usuário definida.
+- **Ordem**: pela data do PGN (`gameTime`). Partidas sem data confiável contam como as mais antigas, como na recomendação. A hora da importação só desempata partidas da mesma data (ou sem data), nunca substitui a data da partida.
+- **Janelas**: as N partidas mais recentes contra as N imediatamente anteriores, sem sobreposição. N = 10 a partir de 20 partidas; de 6 a 19 partidas, N = metade do total arredondada para baixo (com total ímpar, a partida mais antiga fica de fora). Com menos de 6 partidas: "Sem partidas suficientes".
+- **Direção**: diferença = média recente − média anterior, arredondada a 3 casas. Abaixo de 0,3 erro por partida em valor absoluto: "Estável em relação às partidas anteriores". A partir de 0,3: "Menos erros graves por partida" (diferença negativa) ou "Mais erros graves por partida" (diferença positiva). A tela mostra as duas médias e o tamanho das duas amostras, e não atribui causa à mudança. **Amostra pequena**: com 3 partidas por grupo (6 ou 7 partidas), um único erro já muda a média em 0,33, acima do limiar. Nesse caso a direção é mostrada sem a cor de melhora ou piora e com o aviso "Amostra pequena" (revisão independente, M1). **Partidas sem data** nas janelas comparadas: a tela diz quantas são e que entram como as mais antigas, e a direção também perde a cor, porque partidas recentes sem data podem inverter a comparação (auditoria consolidada, AC-5).
+- **O que mede e o que não mede**: mede a frequência dos seus erros graves por partida, segundo a classificação do motor gravada. Não mede força enxadrística, precisão por lance, imprecisões, qualidade das vitórias nem a força dos adversários; partidas curtas e longas pesam igual; uma reanálise em outra profundidade pode mudar classificações. Menos erros graves é um sinal, não uma prova de melhora geral.
+- Substitui "Análises feitas por dia", que media uso do app, não qualidade das partidas.
+
+**Datas exibidas** (auditoria FA-3, Sprint 4.6). A data do PGN é guardada como 00:00 UTC do dia da partida e é lida em UTC; qualquer outro instante (importação, tentativa de exercício, evidência de partida sem data no PGN, nome do arquivo de backup) é lido no calendário local. Um instante é tratado como data do PGN quando cai exatamente às 00:00:00.000 UTC, que é o que `gameTime` produz; um relógio em milissegundos praticamente nunca produz esse valor. Vale para o dia dos gráficos de evolução por competência e para o mês da linha "Diagnóstico histórico".
 
 O dashboard mostra partidas analisadas (de quantas importadas), exercícios resolvidos, acerto independente, revisões pendentes, desempenho recente por dia, padrões de erro recorrentes e as competências **agrupadas por estado** (precisam revisar, em desenvolvimento, consolidadas, evidências insuficientes) com o intervalo de cada uma — sem rating.
