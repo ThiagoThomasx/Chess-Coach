@@ -5,9 +5,9 @@
 | Branch | `feat/sprint4-8-single-owner`, criada de `main` em `4de7e4e` |
 | Data | 2026-11-13 a 2026-11-15 |
 | Origem | Auditoria estratégica pré-4.8 (entregue na conversa, sem arquivo) e escopo aprovado pelo usuário |
-| Estado | **Sem commit.** Todo o trabalho está no working tree da branch; HEAD = `main` = `4de7e4e` |
+| Estado | **5 commits** sobre `main` (`4de7e4e`), enviados para `origin/feat/sprint4-8-single-owner`, mais commits só de documentação (como esta correção); [PR #11](https://github.com/ThiagoThomasx/Chess-Coach/pull/11) aberto contra `main`, **sem merge** (ver §5) |
 
-Legenda: **[R]** reproduzido · **[C]** por inspeção de código · **[E]** resultado de execução · **[U]** informado pelo usuário.
+Legenda: **[R]** reproduzido · **[C]** por inspeção de código · **[E]** resultado de execução local · **[CI]** resultado da CI do GitHub Actions · **[U]** informado pelo usuário.
 
 ## 1. Resumo executivo
 
@@ -19,7 +19,8 @@ Legenda: **[R]** reproduzido · **[C]** por inspeção de código · **[E]** res
 - N-1 (proteção de dados): armazenamento persistente pedido uma vez, data da última exportação de backup gravada só depois do download pedido, lembrete de 14 dias.
 - FA-5 e as esperas fixas do E2E resolvidos; `measure:pedagogy` preparado para decidir o PD-4.
 - Quatro revisões/auditorias independentes; todos os achados MEDIUM corrigidos com teste de regressão.
-- Validação final [E]: Vitest **573** + 1 ignorado, motor real **24/24**, Playwright **95/95**, typecheck e build ok, cobertura de linhas 95,47%.
+- Validação final local [E], no working tree antes dos commits: Vitest **573** + 1 ignorado, motor real **24/24**, Playwright **95/95**, typecheck e build ok, cobertura de linhas 95,47%.
+- CI do PR #11 [CI], no commit `cd52506`: aprovada; typecheck, build, Vitest com **39 arquivos aprovados, 573 testes aprovados e 1 ignorado**, Playwright 95 aprovados.
 - Teste físico (procedimento 9) [U]: Samsung Galaxy S26, Android, **6 de 6 cenários aprovados**.
 
 ## 2. Escopo implementado
@@ -117,9 +118,23 @@ Todas por revisores separados, somente leitura. Nenhum achado CRITICAL ou HIGH e
 
 ## 5. Validação automatizada
 
-### Rodada final (única e sequencial) [E]
+### Validações locais × CI
 
-2026-11-14, das 15:19:38Z às 15:24:25Z, HEAD `4de7e4e`, scripts do `package.json`. Nenhum arquivo de código, teste ou documentação foi alterado depois do início desta rodada.
+| Verificação | Local [E] | CI [CI] |
+|---|---|---|
+| Onde | Working tree da branch, antes dos commits | GitHub Actions, commit `cd52506` |
+| Typecheck | ok | ok |
+| Vitest (`npm test`) | 573 aprovados, 1 ignorado | 39 arquivos aprovados (+1 ignorado), 573 aprovados, 1 ignorado |
+| Motor real | `npm run test:engine`: 24/24 | Sem passo próprio; os testes do motor estão dentro do `npm test` |
+| Cobertura | `npm run coverage` (números abaixo) | **Não executada** |
+| Build | ok | ok |
+| Playwright | 95/95 | 95 aprovados |
+| Typecheck de cada commit intermediário | ok (worktree temporária) | Não se aplica: a CI roda só no commit final do PR |
+| Teste físico | Não se aplica | Não se aplica: registrado pelo usuário na §6 [U] |
+
+### Rodada final local (única e sequencial) [E]
+
+2026-11-14, das 15:19:38Z às 15:24:25Z, com os scripts do `package.json`. Foi executada no **working tree da branch, antes de qualquer commit da sprint**: o HEAD ainda era `main` em `4de7e4e`, e todo o código e os testes da 4.8 estavam no working tree, sem commit. Ela **não** é uma execução do código de `4de7e4e`. Depois do início desta rodada não houve alteração de código, teste ou configuração. A documentação foi ajustada depois: este relatório foi escrito após o teste físico, e esta correção veio depois do PR.
 
 | Verificação | Script | Resultado |
 |---|---|---|
@@ -131,6 +146,32 @@ Todas por revisores separados, somente leitura. Nenhum achado CRITICAL ou HIGH e
 | Playwright | `npm run test:e2e` | **95/95**, sem retentativa |
 
 O teste ignorado continua sendo a medição pedagógica, que só roda com `CORPUS_PGN`. Arquivos do motor conferidos em 2026-11-15: idênticos aos de `node_modules/stockfish/bin`.
+
+### Commits e verificação por commit [E]
+
+Depois da rodada final, o working tree validado foi dividido em cinco commits sobre `main` (`4de7e4e`), adicionando os arquivos um a um (`.claude/` ficou de fora):
+
+| Commit | Conteúdo |
+|---|---|
+| `2109c95` | feat: uma análise por partida entre abas (T-1, `useAnalysisOwner`, `useActiveRun`, reconciliação respeitando o lock, FA-5) |
+| `54c5fff` | feat: lance selecionado na URL (`?ply`) |
+| `279b74f` | feat: proteção de dados (N-1) |
+| `d0e48d6` | test: esperas determinísticas no E2E e métricas do PD-4 em `measure:pedagogy` |
+| `cd52506` | docs: este relatório, README e ARCHITECTURE (só documentação: `git diff d0e48d6 cd52506` altera apenas esses três arquivos) |
+
+Os commits intermediários (`2109c95`, `54c5fff`, `279b74f`, `d0e48d6`) foram conferidos numa **worktree temporária**, removida depois. Cada commit foi aberto isoladamente e passou em `tsc --noEmit -p tsconfig.json`, que cobre app e testes. Nessa worktree rodou **só o typecheck**: testes, build, cobertura e E2E não foram executados commit a commit. O código e os testes do último commit de código (`d0e48d6`) são os do working tree validado na rodada final.
+
+### CI do PR #11 [CI]
+
+| Campo | Valor |
+|---|---|
+| PR | [ThiagoThomasx/Chess-Coach#11](https://github.com/ThiagoThomasx/Chess-Coach/pull/11), `feat/sprint4-8-single-owner` → `main` |
+| Commit verificado | `cd52506` |
+| Execução | workflow `CI`, job `verify` ([run 43722295002](https://github.com/ThiagoThomasx/Chess-Coach/actions/runs/43722295002/job/132836689151)), `ubuntu-latest`, Node 24, 2026-11-15 14:04:02Z → 14:08:36Z |
+| Resultado | **Aprovada** |
+| Passos | `npm ci` e conferência dos arquivos do motor · `npm run typecheck` ok · `npm test`: **39 arquivos aprovados + 1 ignorado; 573 testes aprovados, 1 ignorado** · `npm run build` ok · `npm run test:e2e`: 95 aprovados |
+
+A CI não roda cobertura nem o teste físico. Commits só de documentação depois de `cd52506` (como esta correção) disparam uma nova execução da CI, cujo resultado não está registrado aqui.
 
 ### Execuções descartadas [E]
 
@@ -224,10 +265,10 @@ Sem mudança em `package.json`, dependências, configurações ou schema. Nenhum
 
 ## 9. Conclusão
 
-A Sprint 4.8 está **tecnicamente concluída**: escopo aprovado implementado, todos os achados MEDIUM das revisões corrigidos com teste, rodada final de validação completa verde e teste físico aprovado em 6 de 6 cenários.
+A Sprint 4.8 está **tecnicamente concluída**: escopo aprovado implementado, todos os achados MEDIUM das revisões corrigidos com teste, rodada final de validação local completa verde, CI do PR #11 aprovada e teste físico aprovado em 6 de 6 cenários.
 
 **Limitações:** a janela residual do Web Lock; o comportamento sem a API é o anterior à 4.8; a data da última exportação não prova que o arquivo foi salvo; o teste físico cobre um aparelho Android e um navegador não identificado; os LOWs da §7.
 
 **Fora do escopo:** decisões pedagógicas PX-2 e PD-4 (dependem de coleta com PGNs reais), PD-5, PD-6, PX-6, T-2, T-3, FA-2 e os débitos herdados 2, 3, 4 e 7.
 
-**Próxima etapa:** integração (commit, PR, CI e merge), mediante autorização do usuário; depois do merge, atualizar `docs/BASELINE-MAIN.md` com os números desta sprint.
+**Integração:** commits, push, PR #11 e CI já foram feitos (§5). **Falta:** o merge do PR #11, que depende de autorização do usuário; depois dele, atualizar `docs/BASELINE-MAIN.md` com os números desta sprint.
