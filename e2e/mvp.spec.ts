@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { BLUNDER_PGN, playMove, readTable } from './helpers';
 
 // The MVP definition of done (section 22), end to end, against the production
@@ -99,13 +99,18 @@ test('import → analyze → explain → exercise → solve → reload → profi
   expect(errors, 'no console errors').toEqual([]);
 });
 
+/** Waits for the app's reply in the opening drill (played after a short delay) to be on the board. */
+async function opponentReplied(page: Page, square: string): Promise<void> {
+  await expect(page.locator(`#opening-practice-board-square-${square} [data-piece]`)).toBeVisible();
+}
+
 test('opening practice records progress', async ({ page }) => {
   await page.goto('/#/openings');
   await page.getByTestId('practice-toggle').click();
   await playMove(page, 'opening-practice-board', 'e2e4');
   await expect(page.getByTestId('opening-feedback')).toContainText('e4 ✓');
   // Losing move on purpose (2.Ba6?? bxa6): the engine confirms it, so it counts as an error.
-  await page.waitForTimeout(700);
+  await opponentReplied(page, 'e5');
   await playMove(page, 'opening-practice-board', 'f1a6');
   await expect(page.getByTestId('opening-feedback')).toContainText('O esperado era Nf3', { timeout: 30_000 });
   const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');
@@ -116,7 +121,7 @@ test('opening practice accepts a transposition (audit M3)', async ({ page }) => 
   await page.goto('/#/openings');
   await page.getByTestId('practice-toggle').click();
   await playMove(page, 'opening-practice-board', 'e2e4');
-  await page.waitForTimeout(700);
+  await opponentReplied(page, 'e5');
   // 2.Bc4 Nc6 3.Nf3 reaches the line position after 3.Bc4.
   await playMove(page, 'opening-practice-board', 'f1c4');
   await expect(page.getByTestId('opening-feedback')).toContainText('transposição');
@@ -131,7 +136,7 @@ test('a playable move outside the line ends the drill without an error (audit M3
   await page.goto('/#/openings');
   await page.getByTestId('practice-toggle').click();
   await playMove(page, 'opening-practice-board', 'e2e4');
-  await page.waitForTimeout(700);
+  await opponentReplied(page, 'e5');
   await playMove(page, 'opening-practice-board', 'b1c3');
   await expect(page.getByTestId('opening-feedback')).toContainText('fora do repertório, mas é jogável', { timeout: 30_000 });
   const attempts = await readTable<{ correct: boolean }>(page, 'openingAttempts');

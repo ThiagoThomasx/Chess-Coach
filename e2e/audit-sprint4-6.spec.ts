@@ -12,8 +12,8 @@ test('AC-2: a bookmark created on a position opened by link is not marked review
   await expect(page.getByTestId('move-5')).toHaveAttribute('aria-current', 'true');
   await page.getByRole('button', { name: 'Marcar posição para revisão' }).click();
   await expect(page.getByRole('button', { name: 'Remover marcação de revisão' })).toBeVisible();
-  // Give the page time to run its effects, then read the stored bookmark.
-  await page.waitForTimeout(500);
+  // The page's effects ran when the stored bookmark is there (it is read back by the button above).
+  await expect.poll(async () => (await readTable<Bookmark>(page, 'bookmarks')).length).toBe(1);
   const [mark] = await readTable<Bookmark>(page, 'bookmarks');
   expect(mark?.ply).toBe(5);
   expect(mark?.reviewedAt).toBeUndefined();
@@ -32,7 +32,8 @@ test('AC-2: only the dashboard\'s bookmark link counts as reviewing; other links
   await page.getByTestId('reveal').click();
   await page.getByTestId('origin-link').click();
   await expect(page.getByTestId('move-5')).toHaveAttribute('aria-current', 'true');
-  await page.waitForTimeout(500);
+  // The bookmarks were loaded (the button shows this move as marked): the review effect already ran.
+  await expect(page.getByRole('button', { name: 'Remover marcação de revisão' })).toBeVisible();
   expect((await readTable<Bookmark>(page, 'bookmarks'))[0]?.reviewedAt).toBeUndefined();
   // Opening it from the dashboard's "marked for review" list does review it.
   await page.goto('/#/');
