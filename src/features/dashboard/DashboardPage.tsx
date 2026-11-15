@@ -14,6 +14,7 @@ import { isDueReview } from '../../services/scheduling/srs';
 import { RecentPerformanceChart } from './RecentPerformanceChart';
 import { SkillStates } from './SkillStates';
 import { useMinute } from '../../hooks/useMinute';
+import { backupReminderText, readBackupStatus } from '../../services/backup/dataProtection';
 
 function useDashboardData() {
   return useLiveQuery(async () => {
@@ -36,6 +37,7 @@ function useDashboardData() {
 export function DashboardPage() {
   const settings = useSettings();
   const data = useDashboardData();
+  const backupStatus = useLiveQuery(readBackupStatus, []);
   // Re-rendered every minute: a review that becomes due while the page stays open is counted (audit AI-2).
   useMinute();
   if (!data) return <div className="page muted">Carregando…</div>;
@@ -74,6 +76,7 @@ export function DashboardPage() {
   const pendingBookmarkCount = bookmarks.filter((b) => !b.reviewedAt).length;
   const pendingBookmarks = bookmarks.filter((b) => !b.reviewedAt).slice(0, 5);
   const maxErr = topErrors[0]?.count ?? 1;
+  const backupReminder = backupStatus ? backupReminderText(backupStatus, now) : null;
 
   return (
     <div className="page">
@@ -91,6 +94,12 @@ export function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {backupReminder && (
+        <p className="callout callout-warn small" data-testid="backup-reminder">
+          {backupReminder} Limpar os dados do site apaga tudo. <Link to="/settings">Exportar backup em Configurações</Link>
+        </p>
+      )}
 
       <section className="next-training" aria-labelledby="next-title" data-testid="next-training">
         <h3>Seu próximo treino</h3>

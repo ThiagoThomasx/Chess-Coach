@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { dayKey } from '../../services/stats/stats';
 import { Download, HardDrive, Upload } from 'lucide-react';
-import { clearData, exportBackup, restoreBackup, storageEstimate, validateBackup, type ClearScope } from '../../services/backup/backup';
+import { clearData, exportBackupFile, restoreBackup, storageEstimate, validateBackup, type BackupDownload, type ClearScope } from '../../services/backup/backup';
 import { useToast } from '../../components/feedback/Toast';
+import { useSettings } from '../../hooks/useSettings';
 
 const CLEAR_LABEL: Record<ClearScope, { label: string; warn: string }> = {
   analyses: { label: 'Análises do motor', warn: 'Apaga análises e o cache de avaliações. As partidas, exercícios e o perfil são mantidos.' },
@@ -10,6 +10,19 @@ const CLEAR_LABEL: Record<ClearScope, { label: string; warn: string }> = {
   openings: { label: 'Repertório e treinos de abertura', warn: 'Apaga linhas pessoais, repertório e histórico de treino de aberturas.' },
   all: { label: 'Tudo', warn: 'Apaga TODOS os dados locais, incluindo partidas e todo o histórico de aprendizado. Exporte um backup antes.' },
 };
+
+/** Hands the file to the browser as a download; throws if the browser refuses to start it. */
+function startBrowserDownload({ name, blob }: BackupDownload): void {
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 function fmtBytes(n?: number): string {
   if (n === undefined) return 'n/d';
@@ -19,6 +32,7 @@ function fmtBytes(n?: number): string {
 
 export function DataPanel() {
   const toast = useToast();
+  const { lastBackupAt } = useSettings();
   const fileRef = useRef<HTMLInputElement>(null);
   const [info, setInfo] = useState<Awaited<ReturnType<typeof storageEstimate>> | null>(null);
   const [scope, setScope] = useState<ClearScope>('analyses');
@@ -27,16 +41,14 @@ export function DataPanel() {
   useEffect(refresh, []);
 
   const download = async () => {
-    const data = await exportBackup();
-    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    // Local day: a backup made at 22h in Brazil is not named after the next UTC day (audit FA-3).
-    a.download = `chessquest-backup-${dayKey(Date.now())}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast('Backup exportado', 'good');
+    try {
+      // The date of the last export is recorded only after the download was requested (Sprint 4.8, N-1).
+      await exportBackupFile(startBrowserDownload);
+      toast('Backup exportado. Confira se o arquivo foi salvo na pasta de downloads.', 'good');
+    } catch (e) {
+      console.error('ChessQuest: falha ao exportar o backup', e);
+      toast('Não foi possível exportar o backup. A data da última exportação não foi alterada.', 'bad');
+    }
   };
 
   const restore = async (file: File) => {
@@ -94,6 +106,12 @@ export function DataPanel() {
           </div>
         </div>
       )}
+      <div>
+        <p className="small" data-testid="last-backup">
+          Última exportação de backup: {lastBackupAt !== undefined ? new Date(lastBackupAt).toLocaleDateString('pt-BR') : 'nenhuma neste navegador'}
+        </p>
+        <p className="xs faint">Data da última exportação iniciada (ou do backup restaurado). O navegador não informa se o arquivo foi salvo.</p>
+      </div>
       <div className="row">
         <button className="btn btn-primary" onClick={() => void download()} data-testid="export-backup">
           <Download size={15} /> Exportar backup

@@ -1,5 +1,7 @@
 import { getDb, SCHEMA_VERSION, TABLE_NAMES, type TableName } from '../../db/database';
 import { isValidFen } from '../chess/position';
+import { normalizeSettings } from '../../db/settings';
+import { dayKey } from '../stats/stats';
 
 export const BACKUP_FORMAT = 'chessquest-backup';
 
@@ -10,13 +12,51 @@ export interface BackupFile {
   tables: Partial<Record<TableName, unknown[]>>;
 }
 
+/** Reads every table into a backup file. Records nothing: see `exportBackupFile`. */
 export async function exportBackup(): Promise<BackupFile> {
   const db = getDb();
   const tables: Partial<Record<TableName, unknown[]>> = {};
+  const exportedAt = Date.now();
   await db.transaction('r', TABLE_NAMES.map((t) => db.table(t)), async () => {
     for (const t of TABLE_NAMES) tables[t] = await db.table(t).toArray();
   });
-  return { format: BACKUP_FORMAT, schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), tables };
+  return { format: BACKUP_FORMAT, schemaVersion: SCHEMA_VERSION, exportedAt: new Date(exportedAt).toISOString(), tables };
+}
+
+/** A generated backup, ready to be handed to the browser as a download. */
+export interface BackupDownload {
+  name: string;
+  blob: Blob;
+}
+
+/** Name of the backup file, on the local calendar day (a backup at 22h in Brazil is not named after the next UTC day, audit FA-3). */
+export function backupFileName(at: number): string {
+  return `chessquest-backup-${dayKey(at)}.json`;
+}
+
+/**
+ * Generates the backup file and requests its download (`startDownload`); only then records the
+ * export time as the last backup export (Sprint 4.8, N-1). A failure while reading, serializing or
+ * requesting the download records nothing and is passed on. The browser does not tell whether the
+ * file was saved: the date means "last export started", not "file saved".
+ */
+export async function exportBackupFile(startDownload: (download: BackupDownload) => void): Promise<BackupFile> {
+  const file = await exportBackup();
+  const exportedAt = Date.parse(file.exportedAt);
+  const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
+  startDownload({ name: backupFileName(exportedAt), blob });
+  const db = getDb();
+  await db.transaction('rw', db.settings, () => stampLastBackup(exportedAt));
+  return file;
+}
+
+/**
+ * Records `at` (limited to now: a clock ahead must not silence the reminder, review 4.8 M3) as the
+ * last backup export. Call inside a transaction that includes the settings table.
+ */
+async function stampLastBackup(at: number): Promise<void> {
+  const settings = getDb().settings;
+  await settings.put({ ...normalizeSettings(await settings.get('app')), lastBackupAt: Math.min(at, Date.now()) });
 }
 
 export interface BackupValidation {
@@ -91,6 +131,10 @@ export async function restoreBackup(data: unknown): Promise<BackupValidation> {
       await db.table(t).clear();
       await db.table(t).bulkAdd(rows);
     }
+    // The data now is exactly the file's: it counts as exported at the file's export time (Sprint 4.8,
+    // N-1), also for files made before 4.8. Inside the transaction: a failed restore records nothing.
+    const exportedAt = Date.parse(backup.exportedAt);
+    if (Number.isFinite(exportedAt)) await stampLastBackup(exportedAt);
   });
   return v;
 }
