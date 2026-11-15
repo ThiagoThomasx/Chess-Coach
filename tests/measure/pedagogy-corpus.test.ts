@@ -7,6 +7,10 @@
 //   CORPUS_DEPTH   analysis depth (default: the app default, 16)
 //   CORPUS_MAX     maximum games (default 40)
 //   CORPUS_OUT     optional path of a JSON file with the aggregated report (no moves, no names)
+//
+// Sprint 4.8 (PD-4 preparation): per objective, how often the root search was capped (every
+// searched line accepted, so more moves may be acceptable) and how much the accepted alternatives
+// give up against the first accepted move, in win% points.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { UciEngine } from '../../src/services/engine/UciEngine';
@@ -17,7 +21,8 @@ import { DECISIVE_WIN_PERCENT, ERROR_CLASSES } from '../../src/services/analysis
 import { explainMove } from '../../src/services/pedagogy/explain';
 import { detectConcepts, skillOf } from '../../src/services/pedagogy/concepts';
 import { acceptsPlayedMove, buildExercise, playedMeetsGoal, selectExercisePositions } from '../../src/services/exercises/generate';
-import { completeExercise } from '../../src/services/analysis/analysisRunner';
+import { completeExercise, treeOptions } from '../../src/services/analysis/analysisRunner';
+import { lossBucket, rootSpread } from '../support/pedagogyMetrics';
 import { GAME_SUCCESS_SKILLS } from '../../src/services/adaptation/skills';
 import { DEFAULT_SETTINGS } from '../../src/db/settings';
 import type { Color, Game, MoveClass } from '../../src/types/domain';
@@ -55,7 +60,9 @@ describe.skipIf(!PGN)('pedagogical quality on a game corpus (Sprint 4.7, measure
       keptDecisive: 0, calculationOnly: 0,
       candidates: 0, built: 0, discardedByTree: 0, discardedByGoal: 0,
       goals: {} as Counter, ambiguous: 0, rootAccepted: 0,
+      byGoal: {} as Record<string, { built: number; ambiguous: number; capped: number; rootAccepted: number; alternatives: Counter }>,
     };
+    const rootLines = treeOptions(settings).multiPv;
     for (const [i, parsedGame] of parsed.entries()) {
       const base = { ...parsedGame, id: `corpus-${i}`, importId: 'corpus', importedAt: 0 } as Game;
       const sides = sidesOf(base);
@@ -104,6 +111,14 @@ describe.skipIf(!PGN)('pedagogical quality on a game corpus (Sprint 4.7, measure
           bump(r.goals, full.goal?.kind ?? 'none');
           if (full.ambiguous) r.ambiguous++;
           r.rootAccepted += full.tree?.accepted.length ?? full.acceptableMoves.length;
+          const kind = full.goal?.kind ?? 'none';
+          const g = (r.byGoal[kind] ??= { built: 0, ambiguous: 0, capped: 0, rootAccepted: 0, alternatives: {} });
+          const spread = rootSpread(full.tree?.accepted ?? full.acceptableMoves, full.sideToMove, full.tree ? rootLines : before.lines.length);
+          g.built++;
+          if (full.ambiguous) g.ambiguous++;
+          if (spread.capped) g.capped++;
+          g.rootAccepted += spread.accepted;
+          for (const loss of spread.alternativeLosses) bump(g.alternatives, lossBucket(loss));
         }
       }
     }
@@ -118,6 +133,11 @@ describe.skipIf(!PGN)('pedagogical quality on a game corpus (Sprint 4.7, measure
       `Erros que mantiveram vantagem decisiva (fora do B3): ${r.keptDecisive} · erros verificados só de cálculo (fora do perfil, PD-1): ${r.calculationOnly}`,
       `Exercícios: ${r.candidates} candidato(s) · ${r.built} criado(s) · descartados pela árvore ${r.discardedByTree} · pelo objetivo (PD-2) ${r.discardedByGoal}`,
       `Objetivos: ${JSON.stringify(r.goals)} · ambíguos ${pct(r.ambiguous, r.built)} · lances aceitos na raiz (média) ${r.built ? (r.rootAccepted / r.built).toFixed(2) : '—'}`,
+      `Raiz (busca com ${rootLines} linhas; "no limite" = todas aceitas, pode haver mais lances aceitáveis):`,
+      ...Object.entries(r.byGoal).map(
+        ([kind, g]) =>
+          `  ${kind}: ${g.built} exercício(s) · ambíguos ${pct(g.ambiguous, g.built)} · no limite ${pct(g.capped, g.built)} · aceitos na raiz (média) ${(g.rootAccepted / g.built).toFixed(2)} · perda das alternativas (p.p.) ${JSON.stringify(g.alternatives)}`,
+      ),
     ];
     console.log(`\n${lines.join('\n')}\n`);
     if (process.env.CORPUS_OUT) writeFileSync(process.env.CORPUS_OUT, JSON.stringify({ depth: DEPTH, player: PLAYER ? 'set' : 'both sides', errorClasses: ERROR_CLASSES, ...r }, null, 2));

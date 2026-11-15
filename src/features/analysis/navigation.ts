@@ -93,3 +93,21 @@ export function displayed(fens: readonly string[], plies: readonly PlyInfo[], s:
     variationSan: uciLineToSan(base, s.variation.moves),
   };
 }
+
+/** The main-line ply named by the URL (`?ply=`), clamped to the game; 0 when absent or invalid. */
+export function plyFromParams(params: URLSearchParams, max: number): number {
+  return Math.max(0, Math.min(max, Math.trunc(Number(params.get('ply') ?? 0)) || 0));
+}
+
+/**
+ * The URL parameters with the selected ply (Sprint 4.8): leaving the screen and coming back
+ * (browser back from an exercise, a reload) reopens the same move. Ply 0 drops the parameter.
+ * `review` is dropped too: only the dashboard's link, on opening, reviews a bookmark (audit AC-2).
+ */
+export function paramsWithPly(params: URLSearchParams, ply: number): URLSearchParams {
+  const next = new URLSearchParams(params);
+  if (ply > 0) next.set('ply', String(ply));
+  else next.delete('ply');
+  next.delete('review');
+  return next;
+}

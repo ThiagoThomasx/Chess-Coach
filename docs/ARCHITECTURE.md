@@ -15,6 +15,7 @@
 | 11 | **HashRouter** e rotas com `lazy()` | Funciona servido de qualquer pasta estática sem reescrita de URL; bundle inicial menor. |
 | 12 | **Sem fontes externas**: pilhas de fontes do sistema (serifada para títulos, sans para UI, mono para notação) | Funciona offline e sem CDNs. |
 | 13 | **Testes do motor real via processo filho** (`tests/support/sf-bridge.cjs`) | A detecção de Node do build WASM falha dentro do Vitest; um processo filho roda o mesmo arquivo do motor sem alterações. |
+| 14 | **Uma análise por partida entre abas com Web Locks** (`services/analysis/analysisLock.ts`, Sprint 4.8, T-1): `startAnalysis` roda a análise inteira, derivação incluída, segurando o lock `chessquest.analysis.<gameId>` (`ifAvailable`; ocupado → `AnalysisElsewhereError`) | O navegador libera o lock quando a execução termina ou a aba fecha, então "`running` gravado com lock livre" significa execução órfã. `recoverInterruptedAnalyses` e `reconcileDerivations` pulam os jogos com lock ocupado; a tela (`useAnalysisOwner`) mostra "em outra aba", vigia o lock e recupera o registro quando ele é liberado. Sem a API, tudo funciona como antes. Nativo do navegador: sem dependência nem servidor. |
 
 ## Fluxo de dados da análise
 
@@ -30,14 +31,18 @@ AnalysisPage ── startAnalysis ──▶ analyzeGame (puro)
                                                    (saveAnalysisIfGameExists): partida excluída → a execução para;
                                                    falha de gravação → estado 'error' gravado e anunciado (auditoria AC-1/AC-3)
 AnalysisPage ── useLiveAnalysis: registro gravado + emit do runner (o mais novo por updatedAt)
+             AnalysisControls: useActiveRun (esta aba roda a análise, também depois de sair e voltar) +
+             useAnalysisOwner (outra aba segura o lock?) → controlView (status e botões)
+             lance selecionado ↔ ?ply= na URL (replace: sem novas entradas no histórico; review=1 é lido e removido)
              concluída ──▶ deriveFromAnalysis (também ao definir a cor: changeUserColor)
                                    ├─ eventsFromGame (datados pela partida: gameEvidenceTime) → db.skillEvents
                                    └─ selectExercisePositions → buildExercise → withSolutionTree
                                       → descartado se a árvore aceita o lance jogado → db.exercises
              changeUserColor: troca de lado remove, na transação da cor, os exercícios nunca tentados do lado antigo
              analysis.derivation: 'pending' (gravado junto com a conclusão ou com a cor) → 'done' (quando
-             exercícios e evidências batem com a cor salva); App, ao abrir: redateGameEvidence (idempotente),
-             removeOrphanExerciseEvidence (idempotente) e depois reconcileDerivations refaz os 'pending'
+             exercícios e evidências batem com a cor salva); App, ao abrir (app/startup.ts, etapas independentes): recoverInterruptedAnalyses
+             (pausa só as órfãs), redateGameEvidence (idempotente), removeOrphanExerciseEvidence (idempotente) e
+             reconcileDerivations refaz os 'pending' cujo lock está livre
              addExercise(ex, guard): a cor da partida é conferida na mesma transação da gravação
 AnalysisPage ── useLiveQuery(exercisesForGame: índice gameId) → linkedExercisesByPly (gameId + ply, conferido pelo FEN)
              → selo "Ex." na lista de lances e "Abrir exercício" no painel (B2)

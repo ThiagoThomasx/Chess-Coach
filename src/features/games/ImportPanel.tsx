@@ -4,6 +4,7 @@ import { importPastedPgn, importPgn, type ImportSummary } from '../../db/gamesRe
 import { MAX_PGN_BYTES } from '../../services/pgn/parsePgn';
 import { useSettings } from '../../hooks/useSettings';
 import { useToast } from '../../components/feedback/Toast';
+import { requestPersistentStorageOnce } from '../../services/backup/dataProtection';
 
 const ACCEPTED = /\.(pgn|txt)$/i;
 const PASTE_PLACEHOLDER = '[White "Você"]\n[Black "Adversário"]\n\n1. e4 e5 2. Nf3 Nc6 …';
@@ -22,6 +23,8 @@ export function ImportPanel() {
     setResults(out);
     const imported = out.reduce((s, r) => s + r.record.imported, 0);
     if (out.length) toast(`${imported} partida(s) importada(s)`, imported ? 'good' : 'warn');
+    // With history to protect, the browser is asked once to keep it under storage pressure (Sprint 4.8, N-1).
+    if (imported > 0) void requestPersistentStorageOnce();
   };
 
   const handlePaste = async () => {

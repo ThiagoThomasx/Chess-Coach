@@ -71,10 +71,12 @@ scripts/          copy-engine.mjs (pós-instalação)
 ## Dados e backup
 
 - Os dados ficam no **IndexedDB do navegador**, banco `chessquest`, por origem (ex.: `http://localhost:5173` e `http://localhost:4173` têm bancos separados). Limpar os dados do site no navegador apaga o histórico.
-- **Backup**: Configurações → Dados locais → *Exportar backup* gera `chessquest-backup-AAAA-MM-DD.json` com todas as tabelas.
+- **Backup**: Configurações → Dados locais → *Exportar backup* gera `chessquest-backup-AAAA-MM-DD.json` com todas as tabelas. A tela mostra a **última exportação de backup**: a data é gravada só depois que o arquivo foi gerado e o download foi pedido ao navegador (ou, numa restauração, a data de exportação do arquivo). O navegador não informa se o arquivo foi salvo.
+- **Lembrete de backup**: o painel avisa quando há dados novos e 14 dias ou mais sem exportação (ou, sem nenhuma exportação, desde a primeira partida importada).
 - **Plano da sessão guiada**: fica no `localStorage`, expira no fim do dia e não entra no backup.
 - **Restauração**: *Restaurar backup* valida formato, versão do esquema, chaves e FENs **antes** de alterar qualquer registro; a restauração ocorre numa única transação (tudo ou nada). Backups inválidos são recusados sem tocar no histórico.
-- *Solicitar armazenamento persistente* pede ao navegador para não descartar os dados quando houver pouco espaço.
+- **Armazenamento persistente**: depois da primeira importação, o app pede uma única vez ao navegador para não descartar os dados quando houver pouco espaço. O botão *Solicitar armazenamento persistente* continua disponível enquanto o navegador não conceder.
+- **Várias abas**: uma partida é analisada por uma aba de cada vez (Web Locks do navegador). As outras abas mostram "Analisando em outra aba…" e passam a oferecer *Retomar* quando aquela aba termina ou é fechada. Navegadores sem Web Locks mantêm o comportamento anterior.
 
 ## Licenças
 

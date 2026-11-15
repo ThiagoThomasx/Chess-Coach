@@ -376,6 +376,13 @@ export interface Settings {
   maxExercisesPerGame: number;
   srsIntervalsDays: number[];
   dailyGoal: number;
+  /**
+   * Export time of the last backup whose download was requested, or of the backup restored
+   * (Sprint 4.8, N-1). Not a proof that the file was saved: the browser does not report it.
+   */
+  lastBackupAt?: number;
+  /** When persistent storage was requested automatically, so it is asked only once (Sprint 4.8, N-1). */
+  persistRequestedAt?: number;
 }
 
 export interface ClassificationThresholds {
