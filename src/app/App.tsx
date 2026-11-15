@@ -4,11 +4,7 @@ import { AppShell } from '../components/layout/AppShell';
 import { ToastProvider } from '../components/feedback/Toast';
 import { NotFound } from './NotFound';
 import { useSettings } from '../hooks/useSettings';
-import { recoverInterruptedAnalyses, redateGameEvidence } from '../db/analysisRepo';
-import { loadSettings } from '../db/settings';
-import { reconcileDerivations } from '../services/analysis/analysisRunner';
-import { removeOrphanExerciseEvidence } from '../db/trainingRepo';
-import { getEngine } from '../services/engine/engineService';
+import { appStartupSteps, runStartupSteps } from './startup';
 
 const DashboardPage = lazy(() => import('../features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })));
 const GamesPage = lazy(() => import('../features/games/GamesPage').then((m) => ({ default: m.GamesPage })));
@@ -26,16 +22,8 @@ export function App() {
     document.documentElement.dataset.theme = settings.appTheme;
   }, [settings.appTheme]);
   useEffect(() => {
-    // On start: resumes interrupted analyses, dates game evidence by the game (evidence before Sprint 4.4
-    // used the analysis time), removes evidence of exercises that no longer exist (Sprint 4.5, D-5) and
-    // finishes exercise/evidence derivations a closed tab left pending (the engine starts only if needed).
-    // Each step is independent: one that fails must not keep the next ones from running.
-    const step = (name: string, run: () => Promise<unknown>) => () => run().catch((e: unknown) => console.error(`ChessQuest: falha na etapa de abertura "${name}"`, e));
-    void Promise.resolve()
-      .then(step('retomar análises', recoverInterruptedAnalyses))
-      .then(step('datar evidências', redateGameEvidence))
-      .then(step('limpar evidências órfãs', removeOrphanExerciseEvidence))
-      .then(step('concluir derivações', async () => reconcileDerivations(await loadSettings(), getEngine)));
+    // Independent steps: one that fails does not keep the next ones from running (see startup.ts).
+    void runStartupSteps(appStartupSteps());
   }, []);
   return (
     <ToastProvider>

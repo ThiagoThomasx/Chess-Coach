@@ -2,6 +2,7 @@ import type { AnalysisStatus, Bookmark, GameAnalysis, PositionAnalysis, SkillEve
 import { fenKey, type EvalCache } from '../services/analysis/gameAnalyzer';
 import { newId } from '../utils/hash';
 import { gameEvidenceTime } from '../services/games/gameDate';
+import { heldAnalysisLocks } from '../services/analysis/analysisLock';
 import { getDb } from './database';
 
 export async function getAnalysis(gameId: string): Promise<GameAnalysis | undefined> {
@@ -45,12 +46,32 @@ export async function listCompleteAnalyses(): Promise<GameAnalysis[]> {
   return getDb().analyses.where('status').equals('complete').toArray();
 }
 
-/** Analyses left in "running" state by a closed tab become "paused" so they can be resumed. */
-export async function recoverInterruptedAnalyses(): Promise<number> {
+/**
+ * Analyses left "running" by a closed tab (or a failed final save) become "paused" so they can be
+ * resumed. One whose game lock is held is still running in another tab and stays as it is
+ * (Sprint 4.8, T-1); without Web Locks every "running" record counts as interrupted, as before.
+ * Each record is paused only if it did not change since it was read, in the write's own
+ * transaction: a run that saved meanwhile keeps its state. `gameIds` limits the recovery to
+ * those games; `afterRead` is a test seam that runs between the read and the write.
+ * Resolves to the number of analyses paused.
+ */
+export async function recoverInterruptedAnalyses(gameIds?: readonly string[], afterRead?: () => Promise<unknown>): Promise<number> {
   const db = getDb();
   const running = await db.analyses.where('status').equals('running').toArray();
-  await Promise.all(running.map((a) => db.analyses.put({ ...a, status: 'paused' })));
-  return running.length;
+  const held = await heldAnalysisLocks();
+  const orphans = running.filter((a) => (!gameIds || gameIds.includes(a.gameId)) && !held?.has(a.gameId));
+  await afterRead?.();
+  if (!orphans.length) return 0;
+  return db.transaction('rw', db.analyses, async () => {
+    let paused = 0;
+    for (const a of orphans) {
+      const now = await db.analyses.get(a.gameId);
+      if (now?.status !== 'running' || now.updatedAt !== a.updatedAt) continue;
+      await db.analyses.put({ ...now, status: 'paused' });
+      paused++;
+    }
+    return paused;
+  });
 }
 
 /** IndexedDB-backed cache that reuses any stored search meeting the requested depth and MultiPV. */

@@ -8,6 +8,7 @@ import { addExercise, listExercises } from '../../db/trainingRepo';
 import { buildExercise, noErrorToTrain, selectExercisePositions, withSolutionTree } from '../exercises/generate';
 import { eventsFromGame } from '../adaptation/skills';
 import { gameEvidenceTime } from '../games/gameDate';
+import { heldAnalysisLocks, withAnalysisLock } from './analysisLock';
 
 export { replyLinesOf };
 
@@ -25,6 +26,14 @@ export interface Derivation {
 export interface AnalysisOutcome {
   analysis: GameAnalysis;
   derivation: Derivation | null;
+}
+
+/** The game's analysis is running in another tab: this one did not start it (Sprint 4.8, T-1). */
+export class AnalysisElsewhereError extends Error {
+  constructor() {
+    super('Esta partida já está sendo analisada em outra aba.');
+    this.name = 'AnalysisElsewhereError';
+  }
 }
 
 interface Run {
@@ -51,6 +60,14 @@ export function isRunning(gameId: string): boolean {
 }
 
 /**
+ * The game's run in this tab, if any. It settles after the run is removed from the list, so
+ * `isRunning` is already false when it does (Sprint 4.8 pre-closure audit, MEDIUM 1).
+ */
+export function currentRun(gameId: string): Promise<AnalysisOutcome> | undefined {
+  return runs.get(gameId)?.promise;
+}
+
+/**
  * Starts (or resumes) a game analysis. Listeners are notified after every
  * position; progress is persisted at most every PROGRESS_SAVE_INTERVAL_MS
  * (a closed tab resumes from the stored positions and the eval cache), and
@@ -68,7 +85,7 @@ export function startAnalysis(game: Game, settings: Settings, engine: EngineLike
     if (!(await saveAnalysisIfGameExists(a))) gameGone = true;
   });
   let lastProgress: GameAnalysis | undefined;
-  const promise = (async () => {
+  const run = async (): Promise<AnalysisOutcome> => {
     let result: GameAnalysis;
     try {
       const previous = await getAnalysis(game.id);
@@ -101,6 +118,13 @@ export function startAnalysis(game: Game, settings: Settings, engine: EngineLike
     const derivation = result.status === 'complete' ? await deriveCurrent(game.id, result, settings, engine) : null;
     emit(result);
     return { analysis: result, derivation };
+  };
+  // The whole run, derivation included, holds the game's lock: another tab cannot start the same
+  // game meanwhile, nor take it for interrupted (Sprint 4.8, T-1).
+  const promise = (async () => {
+    const owned = await withAnalysisLock(game.id, run);
+    if (!owned.acquired) throw new AnalysisElsewhereError();
+    return owned.value;
   })().finally(() => runs.delete(game.id));
   runs.set(game.id, { signal, promise });
   return promise;
@@ -288,7 +312,11 @@ async function removeUnattemptedExercises(gameId: string, side: Color): Promise<
  */
 export async function reconcileDerivations(settings: Settings, engine?: () => EngineLike | undefined): Promise<number> {
   const isPending = (a: GameAnalysis | undefined): a is GameAnalysis => a?.status === 'complete' && a.derivation === 'pending' && !isRunning(a.gameId);
-  const pending = (await listCompleteAnalyses()).filter(isPending);
+  // A game whose lock another tab holds is still being derived there (the lock covers the
+  // derivation): left to that tab, and picked up on a later start if it never finishes (Sprint 4.8
+  // pre-closure audit, MEDIUM 2). Without Web Locks, `held` is null and every pending one is done.
+  const held = await heldAnalysisLocks();
+  const pending = (await listCompleteAnalyses()).filter((a) => isPending(a) && !held?.has(a.gameId));
   let reconciled = 0;
   for (const { gameId } of pending) {
     try {

@@ -1,7 +1,8 @@
-import { useState } from 'react';
 import { Cpu, Pause, Play, Zap } from 'lucide-react';
 import type { Game, GameAnalysis, Settings } from '../../types/domain';
-import { derivationMessage, isRunning, startAnalysis, stopAnalysis } from '../../services/analysis/analysisRunner';
+import { AnalysisElsewhereError, derivationMessage, startAnalysis, stopAnalysis } from '../../services/analysis/analysisRunner';
+import { useActiveRun } from './useActiveRun';
+import { controlView, useAnalysisOwner, type ControlView } from './useAnalysisOwner';
 import { useEngine } from '../../hooks/useEngine';
 import { useToast } from '../../components/feedback/Toast';
 
@@ -11,23 +12,24 @@ type Props = {
   settings: Settings;
 };
 
-const STATUS_TEXT: Record<GameAnalysis['status'], string> = {
+const STATUS_TEXT: Record<ControlView['status'], string> = {
   pending: 'Ainda não analisada',
   running: 'Analisando…',
   paused: 'Análise incompleta — pode ser retomada',
   complete: 'Análise concluída',
   error: 'A análise falhou',
+  elsewhere: 'Analisando em outra aba…',
 };
 
 export function AnalysisControls({ game, analysis, settings }: Props) {
   const { engine, state } = useEngine();
   const toast = useToast();
-  const [isActive, setIsActive] = useState(isRunning(game.id));
+  const [isActive, setIsActive] = useActiveRun(game.id);
   const done = analysis?.positions.filter((p) => p && (p.complete || p.terminal)).length ?? 0;
   const total = game.moves.length + 1;
   const pct = Math.round((done / total) * 100);
-  const status = isActive ? 'running' : (analysis?.status ?? 'pending');
-  const running = status === 'running';
+  const owner = useAnalysisOwner(game.id, analysis?.status, isActive);
+  const { status, controls } = controlView(owner, analysis?.status);
 
   const run = async (depth: number) => {
     setIsActive(true);
@@ -37,7 +39,8 @@ export function AnalysisControls({ game, analysis, settings }: Props) {
       else if (r.status === 'error') toast(r.error ?? 'Falha na análise', 'bad');
       else toast('Análise pausada. Os resultados parciais foram salvos.', 'info');
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Falha ao iniciar o motor', 'bad');
+      if (e instanceof AnalysisElsewhereError) toast(e.message, 'info');
+      else toast(e instanceof Error ? e.message : 'Falha ao iniciar o motor', 'bad');
     } finally {
       setIsActive(false);
     }
@@ -66,7 +69,11 @@ export function AnalysisControls({ game, analysis, settings }: Props) {
       </div>
       {analysis?.error && <p className="callout callout-bad small" style={{ marginTop: '0.6rem' }}>{analysis.error}</p>}
       <div className="row" style={{ marginTop: '0.8rem' }}>
-        {running ? (
+        {controls === 'none' ? (
+          <p className="xs muted" data-testid="analysis-elsewhere">
+            Esta partida está sendo analisada em outra aba. O progresso aparece aqui, e você poderá retomar a análise quando aquela aba terminar ou for fechada.
+          </p>
+        ) : controls === 'stop' ? (
           <button className="btn" onClick={() => stopAnalysis(game.id, engine)} data-testid="stop-analysis">
             <Pause size={15} /> Interromper
           </button>
