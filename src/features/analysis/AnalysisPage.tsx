@@ -16,7 +16,7 @@ import { ExplanationPanel } from './ExplanationPanel';
 import { EnginePanel } from './EnginePanel';
 import { GameSummaryPanel } from './GameSummaryPanel';
 import { CurrentMoveStrip } from './CurrentMoveStrip';
-import { displayed, navReducer } from './navigation';
+import { displayed, navReducer, paramsWithPly, plyFromParams } from './navigation';
 import { badgeForReview } from '../../services/analysis/moveBadge';
 import { exercisesForGame } from '../../db/trainingRepo';
 import { linkedExercisesByPly } from '../../services/exercises/origin';
@@ -51,9 +51,18 @@ function AnalysisView({ game }: { game: Game }) {
   const gameExercises = useLiveQuery(() => exercisesForGame(gameId), [gameId]);
   const linkedExercises = useMemo(() => (gameExercises ? linkedExercisesByPly(gameExercises, gameId, fens) : undefined), [gameExercises, gameId, fens]);
   const reducer = useMemo(() => navReducer(plies), [plies]);
-  const [params] = useSearchParams();
-  const initialPly = Math.max(0, Math.min(plies.length, Number(params.get('ply') ?? 0) || 0));
+  const [params, setParams] = useSearchParams();
+  const urlPly = plyFromParams(params, plies.length);
+  const [initialPly] = useState(urlPly);
   const [nav, dispatch] = useReducer(reducer, { ply: initialPly, variation: null });
+  // The selected move lives in the URL too (Sprint 4.8), replacing the entry instead of adding one:
+  // the browser's back button from an exercise reopens this move, and stepping through the game
+  // does not fill the history.
+  useEffect(() => {
+    // Only a new selection writes the URL, so it depends on nav.ply alone (no link leads to another
+    // move of this same screen).
+    if (nav.ply !== urlPly || params.has('review')) setParams(paramsWithPly(params, nav.ply), { replace: true });
+  }, [nav.ply]);
 
   // Opening a bookmarked position from the dashboard's "Posições marcadas" list (`&review=1`) counts as reviewing it.
   // Only that link, and only the bookmark that existed when the page opened: other links to a move (exercise origin,
